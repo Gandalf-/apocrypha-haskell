@@ -4,22 +4,21 @@ import ColorText
 import Devbot.Core
 
 import Text.Read (readMaybe)
-import Data.List (intersperse)
+import Data.List (intercalate)
 import Data.Time.Clock.POSIX (getPOSIXTime)
 
 now :: IO Integer
 now = round `fmap` getPOSIXTime
 
 printAction :: Config -> String
-printAction c = decorate a blue
-    where a = "    " ++ (concat $ intersperse pad $ action c)
+printAction (Config _ action _ _ )  = decorate a blue
+    where a = "    " ++ intercalate pad action
           blue = (Blue, Black, Null) :: Decoration
           pad = "\n    "
 
 printName :: Config -> String
-printName c = decorate n green
-    where n = name c
-          green = (Green, Black, Bold) :: Decoration
+printName (Config name _ _ _) = decorate name green
+    where green = (Green, Black, Bold) :: Decoration
 
 prettyTime :: Integer -> String
 prettyTime i 
@@ -37,21 +36,20 @@ secondsOrTime _ (Just i) = "every " ++ s
     where s = prettyTime i
 
 printInterval :: Config -> String
-printInterval c = decorate ("    " ++ i) cyan
-    where i = secondsOrTime plain (readMaybe plain :: Maybe Integer)
-          plain = interval c
+printInterval (Config _ _ interval _) = decorate ("    " ++ i) cyan
+    where i = secondsOrTime interval (readMaybe interval :: Maybe Integer)
           cyan = (Cyan, Black, Null) :: Decoration
 
 printNext :: Data -> Integer -> String
-printNext d time = decorate ("next in " ++ n) yellow
-    where n = prettyTime $ when d - time
+printNext (Data _ when _) time = decorate ("next in " ++ n) yellow
+    where n = prettyTime $ when - time
           yellow = (Yellow, Black, Null)
 
 
 printOptional :: Config -> Data -> IO ()
-printOptional c d = do
-    printErrors e
-    printRequire r
+printOptional (Config _ _ _ require) (Data _ _ errors) = do
+    printErrors errors
+    printRequire require
     putStrLn ""
     where 
           printErrors :: Maybe Integer -> IO ()
@@ -66,12 +64,9 @@ printOptional c d = do
 
           red = (Red, Black, Null) :: Decoration
 
-          e = errors d
-          r = require c
-
 printEvent :: Maybe Event -> IO ()
 printEvent Nothing = return ()
-printEvent (Just e) = do
+printEvent (Just (Event c d)) = do
     putStrLn $ printName c
     putStrLn $ printAction c
     putStr $ printInterval c
@@ -79,10 +74,6 @@ printEvent (Just e) = do
     putStr $ ", " ++ printNext d time
     printOptional c d
     putStrLn ""
-    where c = eventConfig e
-          d = eventData e
 
 main :: IO ()
-main = do
-    es <- events
-    mapM_ printEvent es
+main = events >>= mapM_ printEvent

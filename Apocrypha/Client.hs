@@ -1,4 +1,9 @@
-module Apocrypha.Client where
+module Apocrypha.Client 
+    ( keys
+    , get
+    , set
+    ) 
+where
 
 import Apocrypha.Network
 
