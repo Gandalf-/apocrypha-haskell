@@ -1,4 +1,4 @@
-module Apocrypha.Network (client) where
+module Apocrypha.Network (client, getContext, Context) where
 
 import Control.Exception (SomeException, try)
 import Network.Socket hiding (send, recv)
@@ -10,6 +10,7 @@ import qualified Data.ByteString.Lazy as B
 import Data.Binary (encode)
 import Data.List (intercalate)
 
+type Context = Maybe Socket
 
 protocol :: String -> B8.ByteString
 protocol message = 
@@ -34,17 +35,33 @@ query sock message = do
 
 type ExceptOrIO = IO (Either SomeException ())
 
-client :: [String] -> IO (Maybe String)
-client message = withSocketsDo $ do
+getSocket :: IO (Maybe Socket)
+getSocket = withSocketsDo $ do
     addrInfo <- getAddrInfo Nothing (Just host) (Just $ show port)
     let serverAddr = head addrInfo
     sock <- socket (addrFamily serverAddr) Stream defaultProtocol
-    canConnect <- try (connect sock (addrAddress serverAddr)) :: ExceptOrIO
+    canConnect <- try (connect sock (addrAddress serverAddr)
+                      ) :: ExceptOrIO
     case canConnect of
       Left  _ -> return Nothing
-      Right _ -> do
-        reply <- query sock message
-        close sock
-        return reply
+      Right _ -> return $ Just sock
     where host = "127.0.0.1"
           port = 9999
+
+
+client :: Context -> [String] -> IO (Maybe String)
+client sock message = 
+
+    case sock of
+      Nothing -> do
+        -- didn't give us a socket? try to get our own
+        s <- getSocket
+        case s of
+          Nothing -> return Nothing
+          Just s' -> query s' message
+
+      -- use their socket
+      Just s  -> query s message
+
+
+getContext = getSocket
