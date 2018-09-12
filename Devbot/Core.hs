@@ -22,7 +22,11 @@ type Action = [String]
 type Interval = String
 type Require = Maybe String
 
-devbot c xs = get c $ "devbot" : xs
+devbot :: Context -> [String] -> IO (Maybe String)
+devbot context items = 
+    get context $ "devbot" : items
+
+maybeInt :: Maybe String -> Maybe Integer
 maybeInt = maybe Nothing (\y -> readMaybe y :: Maybe Integer)
 
 getData :: Context -> String -> IO (Maybe Data)
@@ -64,4 +68,4 @@ getEvent context event = do
 events :: IO [Maybe Event]
 events = do
     context <- getContext
-    keys' ["devbot", "events"] >>= mapM (getEvent context)
+    keys context ["devbot", "events"] >>= mapM (getEvent context)
