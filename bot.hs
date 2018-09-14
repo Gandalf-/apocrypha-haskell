@@ -16,15 +16,8 @@ import System.Exit (ExitCode(..))
 import Data.Maybe (fromMaybe)
 import Text.Read (readMaybe)
 
-import qualified Control.Monad
-
 type State = [Task]
-
-data Task = Task
-      Event
-      (Maybe ProcessHandle)
-      StartTime
-
+data Task = Task Event (Maybe ProcessHandle) StartTime
 type StartTime = Integer
 
 
@@ -34,16 +27,16 @@ startingState es =
 
 runner :: State -> IO State
 runner state = do
-    -- print "running"
-    newState <- mapM handle state
+    -- check each Task for something to do
 
-    threadDelay (1 * second)
-    runner newState
+    threadDelay $ 1 * second
+    mapM handle state >>= runner
+
     where second = 1000000
 
 
 handle :: Task -> IO Task
-handle task@(Task (Event c d) Nothing _) = do
+handle task@(Task (Event _ d) Nothing _) = do
     -- not currently running
     time <- getTime
 
@@ -65,24 +58,25 @@ handle task@(Task _ (Just h) _) = do
         Just _           -> failure task
 
 check :: Task -> IO Task
-check task@(Task (Event c@(Config n _ _ _) _) _ _) = do
+check task@(Task (Event c _) _ _) = do
     met <- requirementsMet c
-
     if met
         then run task
         else return task
 
 run :: Task -> IO Task
 run (Task event@(Event (Config n c _ _) _) _ _) = do
+    -- start running the actions, add handle to Task
     putStrLn $ "Running: " ++ n ++ ": " ++ cmd
+
     h <- spawnCommand cmd
-    time <- getTime
-    return (Task event (Just h) time)
+    Task event (Just h) <$> getTime
+
     where cmd = intercalate "\n" c
 
 
 success :: Task -> IO Task
-success (Task event@(Event c d) _ startTime) = do
+success (Task event@(Event c _) _ startTime) = do
     -- the command succeeded, set errors to Nothing, and determine next
     -- time to run
     duration <- negate . (startTime -) <$> getTime
@@ -90,17 +84,17 @@ success (Task event@(Event c d) _ startTime) = do
     let newEvent = clearErrors $ updateTime event next duration
         newTask  = Task newEvent Nothing 0
 
-    flush newEvent
+    _ <- flush newEvent
     return newTask
 
     where next = nextRun startTime c
 
           clearErrors :: Event -> Event
-          clearErrors (Event c (Data d w _)) =
-            Event c (Data d w Nothing)
+          clearErrors (Event co (Data du wh _)) =
+            Event co (Data du wh Nothing)
 
 failure :: Task -> IO Task
-failure (Task event@(Event c@(Config n _ _ _) d) _ startTime) = do
+failure (Task event@(Event (Config n _ _ _) d) _ startTime) = do
     -- the command failed, log the error, increment errors and set next
     -- time to retry
     logger $ concat ["running ", n
@@ -114,7 +108,7 @@ failure (Task event@(Event c@(Config n _ _ _) d) _ startTime) = do
     let newEvent = incrementError $ updateTime event next duration
         newTask  = Task newEvent Nothing 0
 
-    flush newEvent
+    _ <- flush newEvent
     return newTask
 
     where backoff = getBackoff d
@@ -124,10 +118,11 @@ failure (Task event@(Event c@(Config n _ _ _) d) _ startTime) = do
           getBackoff (Data _ _ (Just e)) = (e + 1) * 10
 
           incrementError :: Event -> Event
-          incrementError (Event c (Data d w Nothing)) =
-              Event c (Data d w (Just 1))
-          incrementError (Event c (Data d w (Just e))) =
-              Event c (Data d w (Just $ e + 1))
+          incrementError (Event c (Data du wh Nothing)) =
+              Event c (Data du wh (Just 1))
+
+          incrementError (Event c (Data du wh (Just e))) =
+              Event c (Data du wh (Just $ e + 1))
 
 updateTime :: Event -> Integer -> Integer -> Event
 updateTime (Event c (Data _ _ e)) newTime duration =
@@ -173,7 +168,7 @@ requirementsMet (Config n _ _ (Just r)) = do
 
     case req of
         Nothing -> do
-            logger $ n ++ " references requirement that doesn't exist"
+            logger doesntExist
             return False
         (Just a) -> runCheck a
     where
@@ -184,8 +179,14 @@ requirementsMet (Config n _ _ (Just r)) = do
               case code of
                   ExitSuccess -> return True
                   _           -> do
-                      logger $ "requirement " ++ r ++ " for " ++ n ++ " not met"
+                      logger cmdFailed
                       return False
+
+          doesntExist =
+            n ++ " references requirement that doesn't exist"
+
+          cmdFailed =
+            "requirement " ++ r ++ " for " ++ n ++ " not met"
 
 convert :: [Maybe a] -> [a]
 convert [] = []
