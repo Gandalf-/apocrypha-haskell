@@ -21,7 +21,7 @@ printName (Config name _ _ _) = decorate name green
     where green = (Green, Black, Bold) :: Decoration
 
 prettyTime :: Integer -> String
-prettyTime i 
+prettyTime i
     | i <= minute = show i ++ " seconds"
     | i <= hour   = show (div i minute) ++ " minutes"
     | i <= day    = show (div i hour) ++ " hours"
@@ -41,8 +41,10 @@ printInterval (Config _ _ interval _) = decorate ("    " ++ i) cyan
           cyan = (Cyan, Black, Null) :: Decoration
 
 printNext :: Data -> Integer -> String
-printNext (Data _ when _) time = decorate ("next in " ++ n) yellow
-    where n = prettyTime $ when - time
+printNext (Data _ when _) time
+    | when - time > 0 = decorate ("next in " ++ t) yellow
+    | otherwise       = decorate "now" yellow
+    where t      = prettyTime $ when - time
           yellow = (Yellow, Black, Null)
 
 
@@ -51,10 +53,10 @@ printOptional (Config _ _ _ require) (Data _ _ errors) = do
     printErrors errors
     printRequire require
     putStrLn ""
-    where 
+    where
           printErrors :: Maybe Integer -> IO ()
           printErrors Nothing = return ()
-          printErrors (Just s) = 
+          printErrors (Just s) =
                 putStr $ ", " ++ decorate (show s ++ " errors") red
 
           printRequire :: Maybe String -> IO ()

@@ -23,7 +23,7 @@ type Interval = String
 type Require = Maybe String
 
 devbot :: Context -> [String] -> IO (Maybe String)
-devbot context items = 
+devbot context items =
     get context $ "devbot" : items
 
 maybeInt :: Maybe String -> Maybe Integer
@@ -60,10 +60,15 @@ getConfig context event = do
 
 getEvent :: Context -> String -> IO (Maybe Event)
 getEvent context event = do
+    -- it's fine for Data to be missing, use a default when it is
     c <- getConfig context event
     d <- getData context event
 
-    return $ liftM2 Event c d
+    return $ liftM2 Event c (case d of
+                                Nothing  -> defaultData
+                                (Just _) -> d)
+
+    where defaultData = Just $ Data 0 0 Nothing
 
 events :: IO [Maybe Event]
 events = do

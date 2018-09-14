@@ -4,9 +4,13 @@ import Apocrypha.Client
 import Devbot.Core
 
 import Data.Time.Clock.POSIX (getPOSIXTime)
-import Control.Concurrent (threadDelay, forkIO)
+import Control.Concurrent (threadDelay)
 import Data.List (intercalate)
-import System.Process (spawnCommand, getProcessExitCode, ProcessHandle)
+import System.Process ( spawnCommand
+                      , getProcessExitCode
+                      , ProcessHandle
+                      , waitForProcess
+                      )
 import System.Exit (ExitCode(..))
 
 import Data.Maybe (fromMaybe)
@@ -30,15 +34,12 @@ startingState es =
 
 runner :: State -> IO State
 runner state = do
-    print "running"
+    -- print "running"
     newState <- mapM handle state
 
-    threadDelay (5 * 1000000)
+    threadDelay (1 * second)
     runner newState
-
-
-getTime :: IO Integer
-getTime = round `fmap` getPOSIXTime
+    where second = 1000000
 
 
 handle :: Task -> IO Task
@@ -54,20 +55,49 @@ handle task@(Task (Event c d) Nothing _) = do
         ready now (Data _ when _) = now > when
 
 handle task@(Task _ (Just h) _) = do
-    -- running, see if it's done
     code <- getProcessExitCode h
     case code of
+        -- still running
         Nothing          -> return task
+
+        -- finished
         Just ExitSuccess -> success task
         Just _           -> failure task
 
+check :: Task -> IO Task
+check task@(Task (Event c@(Config n _ _ _) _) _ _) = do
+    met <- requirementsMet c
+
+    if met
+        then run task
+        else return task
+
+run :: Task -> IO Task
+run (Task event@(Event (Config n c _ _) _) _ _) = do
+    putStrLn $ "Running: " ++ n ++ ": " ++ cmd
+    h <- spawnCommand cmd
+    time <- getTime
+    return (Task event (Just h) time)
+    where cmd = intercalate "\n" c
+
+
 success :: Task -> IO Task
 success (Task event@(Event c d) _ startTime) = do
+    -- the command succeeded, set errors to Nothing, and determine next
+    -- time to run
+    duration <- negate . (startTime -) <$> getTime
 
-    setTime c next
-    return $ Task (updateTime event next) Nothing 0
+    let newEvent = clearErrors $ updateTime event next duration
+        newTask  = Task newEvent Nothing 0
+
+    flush newEvent
+    return newTask
 
     where next = nextRun startTime c
+
+          clearErrors :: Event -> Event
+          clearErrors (Event c (Data d w _)) =
+            Event c (Data d w Nothing)
 
 failure :: Task -> IO Task
 failure (Task event@(Event c@(Config n _ _ _) d) _ startTime) = do
@@ -78,10 +108,14 @@ failure (Task event@(Event c@(Config n _ _ _) d) _ startTime) = do
                     , show backoff, " seconds"]
 
     -- next <- getTime >>= (return . (+ 1))
-    next <- (+ 1) <$> getTime
+    next <- (+ backoff) <$> getTime
+    duration <- negate . (startTime -) <$> getTime
 
-    setTime c next
-    return $ Task (incrementError $ updateTime event next) Nothing 0
+    let newEvent = incrementError $ updateTime event next duration
+        newTask  = Task newEvent Nothing 0
+
+    flush newEvent
+    return newTask
 
     where backoff = getBackoff d
 
@@ -95,33 +129,9 @@ failure (Task event@(Event c@(Config n _ _ _) d) _ startTime) = do
           incrementError (Event c (Data d w (Just e))) =
               Event c (Data d w (Just $ e + 1))
 
-updateTime :: Event -> Integer -> Event
-updateTime (Event c (Data d _ e)) newTime =
-  Event c (Data d newTime e)
-
-setTime :: Config -> Integer -> IO ()
-setTime (Config n _ _ _) time = do
-      _ <- set' ["devbot", "data", n, "when"] $ show time
-      return ()
-
-check :: Task -> IO Task
-check task@(Task (Event c@(Config n _ _ _) _) _ _) = do
-    met <- requirementsMet c
-
-    if met
-        then run task
-        else do
-            logger $ "requirement not met for " ++ n
-            return task
-
-run :: Task -> IO Task
-run (Task event@(Event (Config n c _ _) _) _ _) = do
-    putStrLn $ "Running: " ++ n ++ ": " ++ cmd
-    h <- spawnCommand cmd
-    time <- getTime
-    return (Task event (Just h) time)
-    where cmd = intercalate "\n" c
-
+updateTime :: Event -> Integer -> Integer -> Event
+updateTime (Event c (Data _ _ e)) newTime duration =
+  Event c (Data duration newTime e)
 
 nextRun :: Integer -> Config -> Integer
 nextRun time (Config _ _ interval _) =
@@ -137,23 +147,54 @@ nextRun time (Config _ _ interval _) =
           hour   = minute * 60
           minute = 60
 
+flush :: Event -> IO Event
+flush e@(Event (Config n _ _ _) (Data duration when errors)) = do
+    c <- getContext
+
+    set c ["devbot", "data", n, "duration"] $ show duration
+    set c ["devbot", "data", n, "when"] $ show when
+
+    case errors of
+        Nothing -> del c ["devbot", "data", n, "errors"]
+        Just v  -> set c ["devbot", "data", n, "errors"] $ show v
+
+    return e
 
 logger :: String -> IO ()
 logger msg = do
     time <- getTime
     putStrLn $ "devbot: " ++ show time ++ " " ++ msg
 
-devbotLog (Config name _ _ _) msg =
-    putStrLn $ "devbot " ++ name ++ " " ++ msg
-
 
 requirementsMet :: Config -> IO Bool
-requirementsMet c = return True
+requirementsMet (Config _ _ _ Nothing) = return True
+requirementsMet (Config n _ _ (Just r)) = do
+    req <- get' ["devbot", "requirements", r]
+
+    case req of
+        Nothing -> do
+            logger $ n ++ " references requirement that doesn't exist"
+            return False
+        (Just a) -> runCheck a
+    where
+          runCheck :: String -> IO Bool
+          runCheck cmd = do
+              h <- spawnCommand cmd
+              code <- waitForProcess h
+              case code of
+                  ExitSuccess -> return True
+                  _           -> do
+                      logger $ "requirement " ++ r ++ " for " ++ n ++ " not met"
+                      return False
 
 convert :: [Maybe a] -> [a]
 convert [] = []
 convert (Nothing:xs) = convert xs
 convert (Just e :xs) = e : convert xs
+
+
+getTime :: IO Integer
+getTime = round `fmap` getPOSIXTime
 
 
 main :: IO ()
