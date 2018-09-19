@@ -1,7 +1,15 @@
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE DeriveGeneric #-}
+
 module Devbot.Core where
 
+import GHC.Generics
 import Apocrypha.Client
 
+import qualified Data.Map
+import Data.Aeson
+
+import Data.Maybe (fromMaybe)
 import Control.Monad (liftM2, liftM3, liftM4)
 import Text.Read (readMaybe)
 
@@ -9,8 +17,23 @@ import Text.Read (readMaybe)
 data Event = Event Config Data
     deriving (Show, Eq)
 
-data Data = Data Duration When Errors
-    deriving (Show, Eq)
+-- data Data = Data Duration When Errors
+data Data = Data
+          { duration :: Integer
+          , when   :: Integer
+          , errors :: Maybe Integer
+          }
+    deriving (Show, Eq, Generic)
+
+instance FromJSON Data where
+    parseJSON = withObject "Data" $ \v -> Data
+        <$> v .:  "duration"
+        <*> v .:  "when"
+        <*> v .:? "errors"
+
+instance ToJSON Data where
+    toEncoding = genericToEncoding defaultOptions
+
 type Duration = Integer
 type When = Integer
 type Errors = Maybe Integer
@@ -33,15 +56,19 @@ getData :: Context -> String -> IO (Maybe Data)
 getData context event = do
     let c = context
 
-    d <- devbot c ["data", event, "duration"]
-    w <- devbot c ["data", event, "when"]
-    r <- devbot c ["data", event, "errors"]
+    m <- jGet c ["devbot", "data", event, "--edit"]
+    return (decode m :: Maybe Data)
 
-    let duration = maybeInt d
-        when     = maybeInt w
-        errors   = Just (maybeInt r)
+    -- d <- devbot c ["data", event, "duration"]
+    -- w <- devbot c ["data", event, "when"]
+    -- r <- devbot c ["data", event, "errors"]
 
-    return $ liftM3 Data duration when errors
+    -- let duration = maybeInt d
+    --     when     = maybeInt w
+    --     errors   = Just (maybeInt r)
+
+    -- -- return $ liftM3 Data duration when errors
+    -- return Nothing
 
 getConfig :: Context -> String -> IO (Maybe Config)
 getConfig context event = do
@@ -68,7 +95,7 @@ getEvent context event = do
                                 Nothing  -> defaultData
                                 (Just _) -> d)
 
-    where defaultData = Just $ Data 0 0 Nothing
+    where defaultData = Nothing -- Just $ Data 0 0 Nothing
 
 events :: IO [Maybe Event]
 events = do

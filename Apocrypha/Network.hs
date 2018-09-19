@@ -32,7 +32,7 @@ unprotocol bytes = clean result
         clean xs = Just $ init xs
 
 protoLen :: B8.ByteString -> Int
-protoLen b = decode (B.fromStrict bytes) :: Int
+protoLen b = maximum [0, decode (B.fromStrict bytes) :: Int]
   where bytes = B8.take 8 . B8.append (B8.replicate 4 '\0') $ b
 
 _query :: Maybe Socket -> [String] -> IO B8.ByteString
@@ -40,7 +40,10 @@ _query Nothing _ = return B8.empty
 _query (Just sock) msg = do
     _ <- send sock . protocol . intercalate "\n" $ msg
     size   <- recv sock 4
-    recv sock $ protoLen size
+    let s = protoLen size
+    if s > 0
+      then recv sock s
+      else return B8.empty
 
 query :: Maybe Socket -> [String] -> IO (Maybe String)
 query sock message = do
