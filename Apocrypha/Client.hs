@@ -1,12 +1,12 @@
 module Apocrypha.Client
     ( keys, keys'
     , get, get'
+    , jGet
     , set, set'
     , del
     , getContext
     , Context
-    )
-where
+    ) where
 
 import Apocrypha.Network
 
@@ -16,7 +16,8 @@ keys con items = do
     return $ maybe [] words result
 
 get :: Context -> [String] -> IO (Maybe String)
-get = client
+get  = client
+jGet = jClient
 
 set :: Context -> [String] -> String -> IO ()
 set con items value = do

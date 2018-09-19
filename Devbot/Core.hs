@@ -72,5 +72,5 @@ getEvent context event = do
 
 events :: IO [Maybe Event]
 events = do
-    context <- getContext
+    context <- getContext Nothing Nothing -- (Just "aspen.anardil.net") Nothing
     keys context ["devbot", "events"] >>= mapM (getEvent context)

@@ -144,7 +144,7 @@ nextRun time (Config _ _ interval _) =
 
 flush :: Event -> IO Event
 flush e@(Event (Config n _ _ _) (Data duration when errors)) = do
-    c <- getContext
+    c <- getContext Nothing Nothing
 
     set c ["devbot", "data", n, "duration"] $ show duration
     set c ["devbot", "data", n, "when"] $ show when
