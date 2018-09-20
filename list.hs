@@ -68,7 +68,7 @@ printOptional (Config _ _ require) (Data _ _ errors) = do
 
 printEvent :: Maybe Event -> IO ()
 printEvent Nothing = return ()
-printEvent (Just e@(Event n c d)) = do
+printEvent (Just (Event n c d)) = do
     putStrLn $ printName n
     putStrLn $ printAction c
     putStr $ printInterval c
