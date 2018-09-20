@@ -1,5 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE FlexibleInstances #-}
 
 module Devbot.Core where
 
@@ -9,15 +11,18 @@ import Apocrypha.Client
 import qualified Data.Map
 import Data.Aeson
 
+import Data.Foldable (asum)
 import Data.Maybe (fromMaybe)
 import Control.Monad (liftM2, liftM3, liftM4)
 import Text.Read (readMaybe)
+import qualified Data.Text as T
 
 
-data Event = Event Config Data
+data Event = Event Name Config Data
     deriving (Show, Eq)
 
--- data Data = Data Duration When Errors
+type Name = String
+
 data Data = Data
           { duration :: Integer
           , when   :: Integer
@@ -26,76 +31,62 @@ data Data = Data
     deriving (Show, Eq, Generic)
 
 instance FromJSON Data where
-    parseJSON = withObject "Data" $ \v -> Data
-        <$> v .:  "duration"
-        <*> v .:  "when"
-        <*> v .:? "errors"
 
 instance ToJSON Data where
     toEncoding = genericToEncoding defaultOptions
 
-type Duration = Integer
-type When = Integer
-type Errors = Maybe Integer
+data Config = Config
+            { action :: [String]
+            , interval :: String
+            , require :: Maybe String
+            }
+    deriving (Eq, Show, Generic)
 
-data Config = Config Name Action Interval Require
-    deriving (Eq, Show)
-type Name = String
-type Action = [String]
-type Interval = String
-type Require = Maybe String
+data Action = Action [String] | String
+    deriving (Show, Eq, Generic)
+
+instance FromJSON Action where
+
+instance ToJSON Action where
+    toEncoding = genericToEncoding defaultOptions
+
+instance FromJSON Config where
+    parseJSON = withObject "Config" $ \o -> do
+        action   <- asum [
+                do s <- o .: "action"
+                   case s of
+                       (Array _)             -> parseJSON s
+                       (Data.Aeson.String s) -> return [T.unpack s]
+            ]
+        interval <- o .:  "interval"
+        require  <- o .:? "require"
+
+        return Config{..}
+
+instance ToJSON Config where
+    toEncoding = genericToEncoding defaultOptions
+
 
 devbot :: Context -> [String] -> IO (Maybe String)
 devbot context items =
     get context $ "devbot" : items
 
-maybeInt :: Maybe String -> Maybe Integer
-maybeInt = maybe Nothing (\y -> readMaybe y :: Maybe Integer)
-
-getData :: Context -> String -> IO (Maybe Data)
-getData context event = do
-    let c = context
-
-    m <- jGet c ["devbot", "data", event, "--edit"]
-    return (decode m :: Maybe Data)
-
-    -- d <- devbot c ["data", event, "duration"]
-    -- w <- devbot c ["data", event, "when"]
-    -- r <- devbot c ["data", event, "errors"]
-
-    -- let duration = maybeInt d
-    --     when     = maybeInt w
-    --     errors   = Just (maybeInt r)
-
-    -- -- return $ liftM3 Data duration when errors
-    -- return Nothing
-
-getConfig :: Context -> String -> IO (Maybe Config)
-getConfig context event = do
-    let c = context
-
-    a <- devbot c ["events", event, "action"]
-    i <- devbot c ["events", event, "interval"]
-    r <- devbot c ["events", event, "require"]
-
-    let name     = Just event
-        action   = fmap lines a
-        interval = i
-        require  = Just r
-
-    return $ liftM4 Config name action interval require
 
 getEvent :: Context -> String -> IO (Maybe Event)
-getEvent context event = do
+getEvent context name = do
     -- it's fine for Data to be missing, use a default when it is
-    c <- getConfig context event
-    d <- getData context event
 
-    return $ liftM2 Event c (case d of
-                                Nothing  -> defaultData
-                                (Just _) -> d)
+    c <- getter context ["devbot", "events", name] :: IO (Maybe Config)
+    d <- getter context ["devbot", "data"  , name] :: IO (Maybe Data)
 
-    where defaultData = Nothing -- Just $ Data 0 0 Nothing
+    return $ liftM3 Event
+        (Just name)
+        c
+        (case d of
+           Nothing  -> defaultData
+           (Just _) -> d)
+
+    where defaultData = Just $ Data 0 0 Nothing
 
 events :: IO [Maybe Event]
 events = do

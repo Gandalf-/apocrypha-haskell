@@ -146,12 +146,12 @@ flush :: Event -> IO Event
 flush e@(Event (Config n _ _ _) (Data duration when errors)) = do
     c <- getContext Nothing Nothing
 
-    set c ["devbot", "data", n, "duration"] $ show duration
-    set c ["devbot", "data", n, "when"] $ show when
+    set c ["devbot", "data", n, "duration"] duration
+    set c ["devbot", "data", n, "when"] when
 
     case errors of
         Nothing -> del c ["devbot", "data", n, "errors"]
-        Just v  -> set c ["devbot", "data", n, "errors"] $ show v
+        Just v  -> set c ["devbot", "data", n, "errors"] v
 
     return e
 
