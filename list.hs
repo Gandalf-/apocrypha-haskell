@@ -3,7 +3,6 @@ module Main where
 import ColorText
 import Devbot.Core
 
-import Text.Read (readMaybe)
 import Data.List (intercalate)
 import Data.Time.Clock.POSIX (getPOSIXTime)
 
@@ -11,10 +10,10 @@ now :: IO Integer
 now = round `fmap` getPOSIXTime
 
 printAction :: Config -> String
-printAction (Config action _ _ )  = decorate a blue
-    where a = "    " ++ intercalate pad action
+printAction (Config act _ _ )  = decorate a blue
+    where a    = "    " ++ intercalate pad act
           blue = (Blue, Black, Null) :: Decoration
-          pad = "\n    "
+          pad  = "\n    "
 
 printName :: String -> String
 printName name = decorate name green
@@ -30,28 +29,23 @@ prettyTime i
           hour = 3600
           minute = 60
 
-secondsOrTime :: String -> Maybe Integer -> String
-secondsOrTime d Nothing   = d
-secondsOrTime _ (Just i) = "every " ++ s
-    where s = prettyTime i
-
 printInterval :: Config -> String
-printInterval (Config _ interval _) = decorate ("    " ++ i) cyan
-    where i = secondsOrTime interval (readMaybe interval :: Maybe Integer)
-          cyan = (Cyan, Black, Null) :: Decoration
+printInterval (Config _ i _) =
+        decorate ("    every " ++ prettyTime i) cyan
+    where cyan = (Cyan, Black, Null) :: Decoration
 
 printNext :: Data -> Integer -> String
-printNext (Data _ when _) time
-    | when - time > 0 = decorate ("next in " ++ t) yellow
-    | otherwise       = decorate "now" yellow
-    where t      = prettyTime $ when - time
+printNext (Data _ w _) time
+    | w - time > 0 = decorate ("next in " ++ t) yellow
+    | otherwise    = decorate "now" yellow
+    where t      = prettyTime $ w - time
           yellow = (Yellow, Black, Null)
 
 
 printOptional :: Config -> Data -> IO ()
-printOptional (Config _ _ require) (Data _ _ errors) = do
-    printErrors errors
-    printRequire require
+printOptional (Config _ _ req) (Data _ _ errs) = do
+    printErrors errs
+    printRequire req
     putStrLn ""
     where
           printErrors :: Maybe Integer -> IO ()

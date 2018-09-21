@@ -13,8 +13,6 @@ import System.Process ( spawnCommand
                       )
 import System.Exit (ExitCode(..))
 
-import Data.Maybe (fromMaybe)
-import Text.Read (readMaybe)
 
 type State = [Task]
 data Task = Task Event (Maybe ProcessHandle) StartTime
@@ -24,6 +22,12 @@ type StartTime = Integer
 startingState :: [Maybe Event] -> State
 startingState es =
     map (\e -> Task e Nothing 0) $ convert es
+    where
+        convert :: [Maybe a] -> [a]
+        convert [] = []
+        convert (Nothing:xs) = convert xs
+        convert (Just e :xs) = e : convert xs
+
 
 runner :: State -> IO State
 runner state = do
@@ -67,12 +71,12 @@ check task@(Task (Event n c _) _ _) = do
 run :: Task -> IO Task
 run (Task event@(Event n (Config c _ _) _) _ _) = do
     -- start running the actions, add handle to Task
-    putStrLn $ "Running: " ++ n ++ ": " ++ cmd
+    putStrLn $ "Running: " ++ n ++ ":\n" ++ cmd
 
     h <- spawnCommand cmd
     Task event (Just h) <$> getTime
 
-    where cmd = intercalate "\n" c
+    where cmd = intercalate "\n" . map ("  " ++) $ c
 
 
 success :: Task -> IO Task
@@ -130,24 +134,14 @@ updateTime (Event n c (Data _ _ e)) newTime duration =
 
 nextRun :: Integer -> Config -> Integer
 nextRun time (Config _ interval _) =
-        time + parse interval
-    where
-          parse "hourly" = hour
-          parse "daily"  = daily
-          parse "weekly" = weekly
-          parse n        = fromMaybe daily (readMaybe n :: Maybe Integer)
-
-          weekly = daily * 7
-          daily  = hour * 24
-          hour   = minute * 60
-          minute = 60
+        time + interval
 
 flush :: Event -> IO Event
 flush e@(Event n _ (Data duration when errors)) = do
     c <- getContext Nothing Nothing
 
     set c ["devbot", "data", n, "duration"] duration
-    set c ["devbot", "data", n, "when"] when
+    set c ["devbot", "data", n, "when"    ] when
 
     case errors of
         Nothing -> del c ["devbot", "data", n, "errors"]
@@ -187,11 +181,6 @@ requirementsMet n (Config _ _ (Just r)) = do
 
           cmdFailed =
             "requirement " ++ r ++ " for " ++ n ++ " not met"
-
-convert :: [Maybe a] -> [a]
-convert [] = []
-convert (Nothing:xs) = convert xs
-convert (Just e :xs) = e : convert xs
 
 
 getTime :: IO Integer
