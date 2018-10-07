@@ -1,6 +1,7 @@
 module Apocrypha.Network
     ( client, jClient
     , Context, getContext, cleanContext
+    , protoSend, protoRead
     ) where
 
 import Control.Exception (SomeException, try)
@@ -14,11 +15,11 @@ import Data.Binary (encode, decode)
 import Data.List (intercalate)
 
 
-protocol :: String -> B8.ByteString
+protocol :: B8.ByteString -> B8.ByteString
 protocol message =
     B8.append len msg
-    where len = htonl' $ length message
-          msg = B8.pack message
+    where len = htonl' $ B8.length message
+          msg = message
           htonl' = B8.drop 4 . B.toStrict . encode
 
 
@@ -36,10 +37,8 @@ protoLen b = maximum [0, len]
         len   = decode (B.fromStrict bytes) :: Int
 
 
-_query :: Maybe Socket -> [String] -> IO B8.ByteString
-_query Nothing _ = return B8.empty
-_query (Just sock) msg = do
-    _ <- send sock . protocol . intercalate "\n" $ msg
+protoRead :: Socket -> IO B8.ByteString
+protoRead sock = do
     size <- recv sock 4
     reader sock $ protoLen size
 
@@ -51,6 +50,17 @@ _query (Just sock) msg = do
                 bytes <- recv sock s
                 next  <- reader sock (s - B8.length bytes)
                 return $ B8.append bytes next
+
+protoSend :: Socket -> B8.ByteString -> IO ()
+protoSend sock msg = do
+    _ <- send sock . protocol $ msg
+    return ()
+
+_query :: Maybe Socket -> [String] -> IO B8.ByteString
+_query Nothing _ = return B8.empty
+_query (Just sock) msg = do
+    _ <- protoSend sock . B8.pack . intercalate "\n" $ msg
+    protoRead sock
 
 
 query :: Maybe Socket -> [String] -> IO (Maybe String)

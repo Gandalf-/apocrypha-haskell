@@ -1,4 +1,4 @@
-module Main where
+module Database where
 
 import Data.Aeson
 
@@ -20,9 +20,6 @@ data Action = Action Value [String]
 type Operations = [String]
 
 
-main :: IO ()
-main = getArgs >>= runner
-
 runner args = do
     db <- getDB Nothing
     case db of
@@ -32,13 +29,13 @@ runner args = do
 
 handle :: Value -> Operations -> IO ()
 handle database args = do
-    let (Action newDB output) = action baseAction args
-    _ <- saveDB Nothing newDB
+        saveDB Nothing newDB
 
-    unless (null output)
-        (putStrLn $ intercalate "\n" output)
-
-    where baseAction = Action database []
+        unless (null output)
+            (putStrLn $ intercalate "\n" output)
+    where
+        (Action newDB output) = action baseAction args
+        baseAction = Action database []
 
 
 action :: Action -> Operations -> Action
@@ -52,16 +49,17 @@ action a ("-e" : v) = action a $ "--edit" : v
 
 -- get
 action (Action value output) [] =
-        Action value $ output ++ [dump value]
+        Action value $ output ++ [pretty value]
 
 
--- keys
+-- keys - object
 action (Action db@(Object o) output) ("--keys" : _) =
         Action db $ output ++ keys
     where keys = sort . map T.unpack $ HM.keys o
 
+-- keys - bottom
 action (Action a _) ("--keys" : _) =
-    dbError a "cannot retrieve keys for non-dict"
+        dbError a "cannot retrieve keys for non-dict"
 
 
 -- assign
@@ -73,13 +71,14 @@ action (Action db r) ("=" : values) =
 
 
 -- set
-action (Action v _) ["--set"] = dbError v "unable to parse JSON"
-
 action (Action v output) ("--set" : values) =
         update parsed
     where
         parsed :: Maybe Value
-        parsed = decodeStrict . B8.pack . head $ values
+        parsed =
+            if null values
+                then Nothing
+                else decodeStrict . B8.pack . head $ values
 
         update Nothing  = dbError v "unable to parse JSON"
         update (Just a) = Action a output
@@ -90,15 +89,14 @@ action (Action _ output) ("--del" : _) =
         Action Null output
 
 
--- append
---   array
+-- append - array
 action (Action (Array a  ) output) ("+" : values) =
         Action (Array new) output
     where
         new   = a V.++ right
         right = V.fromList . map (String . T.pack) $ values
 
---   object
+-- append - object
 action (Action db@(Object o) output) ("+" : values) =
     -- we allow appending to a dictionary only if it's empty,
     -- since that means it's new and hasn't been assigned a value
@@ -109,7 +107,7 @@ action (Action db@(Object o) output) ("+" : values) =
     where emptyAction = Action emptyArray output
           emptyArray  = Array . V.fromList $ []
 
---   string
+-- append - string
 action (Action value@(String _) output) ("+" : values) =
         Action (Array new) output
     where
@@ -117,13 +115,12 @@ action (Action value@(String _) output) ("+" : values) =
         left  = V.fromList [value]
         right = V.fromList . map (String . T.pack) $ values
 
---   bottom
+-- append - bottom
 action (Action a _) ("+" : _) =
         dbError a "this type does not support addition"
 
 
--- subtract
---   array
+-- subtract - array
 action (Action (Array a  ) output) ("-" : values) =
         if V.length new == 1
             then Action (V.head new) output
@@ -133,7 +130,7 @@ action (Action (Array a  ) output) ("-" : values) =
         new   = V.filter (`notElem` right) a
         right = V.fromList . map (String . T.pack) $ values
 
---   string
+-- subtract - string
 action (Action value@(String s) output) ("-" : v) =
         if s `elem` values
             then Action Null  output
@@ -141,7 +138,7 @@ action (Action value@(String s) output) ("-" : v) =
     where
         values = map T.pack v
 
---   bottom
+-- subtract - bottom
 action (Action a _) ("-" : _) =
         dbError a "this type does not support subtraction"
 
@@ -165,7 +162,8 @@ action (Action (Object o) r) (k : xs) =
         key      = T.pack k
 
 
-action (Action db _) _ = dbError db "cannot index through non-dict"
+action (Action db _) _ =
+        dbError db "cannot index through non-dict"
 
 
 -- json utilities
@@ -184,6 +182,29 @@ empty (Array  a) = V.null a
 empty (String s) = T.null s
 empty Null       = True
 empty _          = False
+
+pretty :: Value -> String
+pretty Null = ""
+pretty (Array v) = intercalate "\n" . map pretty . V.toList $ v
+pretty v@(Object _) = result
+    where
+        result = go (dump v) 0
+        go :: String -> Int -> String
+        go [] _ = "\n"
+        go ('{': cs) d = "\n" ++ replicate d ' ' ++ go cs (d + 2)
+        go ('[': cs) d = "\n" ++ replicate d ' ' ++ go cs (d + 2)
+
+        go (',': cs) d = "\n" ++ replicate (d - 2) ' ' ++ go cs d
+
+        go ('}': cs) d = go cs (d - 2)
+        go (']': cs) d = go cs (d - 2)
+
+        go ('"': cs) d = "'" ++ go cs d
+        go (':': cs) d = ": " ++ go cs d
+        go (c  : cs) d = c : go cs d
+
+pretty (String s) = T.unpack s
+pretty v = show v
 
 
 -- IO utilities
