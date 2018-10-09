@@ -30,17 +30,22 @@ unprotocol bytes = clean result
         clean xs = Just $ init xs
 
 
-protoLen :: B8.ByteString -> Int
-protoLen b = maximum [0, len]
+protoLen :: B8.ByteString -> Maybe Int
+protoLen b =
+    if B8.length b == 4
+      then Just $ maximum [0, len]
+      else Nothing
 
   where bytes = B8.take 8 . B8.append (B8.replicate 4 '\0') $ b
         len   = decode (B.fromStrict bytes) :: Int
 
 
-protoRead :: Socket -> IO B8.ByteString
+protoRead :: Socket -> IO (Maybe B8.ByteString)
 protoRead sock = do
     size <- recv sock 4
-    reader sock $ protoLen size
+    case protoLen size of
+        Nothing -> return Nothing
+        Just s  -> Just <$> reader sock s
 
     where
           reader :: Socket -> Int -> IO B8.ByteString
@@ -59,8 +64,13 @@ protoSend sock msg = do
 _query :: Maybe Socket -> [String] -> IO B8.ByteString
 _query Nothing _ = return B8.empty
 _query (Just sock) msg = do
-    _ <- protoSend sock . B8.pack . intercalate "\n" $ msg
-    protoRead sock
+
+    protoSend sock . B8.pack . intercalate "\n" $ msg
+    result <- protoRead sock
+
+    case result of
+        Nothing -> return B8.empty
+        Just r  -> return r
 
 
 query :: Maybe Socket -> [String] -> IO (Maybe String)

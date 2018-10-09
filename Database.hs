@@ -5,7 +5,6 @@ import Data.Aeson
 import Control.Monad (unless)
 import Data.List (intercalate, sort)
 import Data.Maybe (fromMaybe)
-import System.Environment (getArgs)
 
 import qualified Data.ByteString.Lazy as B
 import qualified Data.ByteString.Char8 as B8
