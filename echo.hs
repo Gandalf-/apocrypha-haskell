@@ -63,8 +63,8 @@ worker database query =
         -- saveDB Nothing newDB
         return (intercalate "\n" output, newDB)
     where
-        (Action newDB output) = action baseAction query
-        baseAction = Action database []
+        (Action newDB changed output) = action baseAction query
+        baseAction = Action database False []
 
 -- getTime :: IO Integer
 getTime = getPOSIXTime

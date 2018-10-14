@@ -1,139 +1,129 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 import Control.Concurrent
+import Control.Concurrent.Async (async)
 import Control.Monad.Except
 import Control.Monad.Reader
 import Data.List (intercalate)
-import Data.Map (Map)
-import Data.Monoid
-import Data.Text (Text)
 import Network
 import System.IO
 
+import Apocrypha.Network2
 import Database
 import Data.Aeson
+import Data.ByteString.Char8 (ByteString)
+import Data.Time.Clock.POSIX (getPOSIXTime)
 
-import qualified Data.Map as M
+import qualified Data.ByteString.Char8 as B8
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
 
 
+type WriteReq = MVar Bool
 type Database = MVar Value
 type ServerApp = ReaderT ThreadData IO
-data Speaker = Server | Client Text
 data ThreadData = ThreadData
                 { threadHandle :: Handle
                 , userTableMV  :: Database
+                , writeRequest :: WriteReq
                 }
 
 
 main :: IO ()
 main = do
-    server <- listenOn $ PortNumber 5002
-    T.putStrLn "Server started"
-    db <- getDB Nothing
-    case db of
-        Null -> putStrLn "Could not parse database on disk"
-        _    -> newMVar db >>= clientLoop server
+        server <- listenOn $ PortNumber 9999
+        T.putStrLn "Server started"
+        db <- getDB Nothing
+        case db of
+            Null -> putStrLn "Could not parse database on disk"
+            _    -> do
+                dbMV <- newMVar db
+                wrMV <- newMVar False
+                _ <- async $
+                    runReaderT diskWriter (ThreadData stdout dbMV wrMV)
+                withSocketsDo . clientForker server dbMV $ wrMV
 
 
-clientLoop :: Socket -> Database -> IO b
-clientLoop socket db = do
-    (h, _, _) <- accept socket
-    hSetBuffering h LineBuffering
-
-    _ <- forkIO $ runReaderT userChat (ThreadData h db)
-    clientLoop socket db
-
-
-userChat :: ServerApp ()
-userChat =
-    -- name <- addUser
-    -- echoLocal name
-    forever $ getRemoteLine >>= serve
-    -- h <- viewHandle
-    -- flip catchError (\_ -> removeUser name) $
-    --   do echoLocal $ "Accepted " <> name
-    --      forever $ getRemoteLine >>= broadcast (Client name)
+clientForker :: Socket -> Database -> WriteReq -> IO b
+clientForker socket db wr = do
+        (h, _, _) <- accept socket
+        hSetBuffering h NoBuffering
+        _ <- async $ runReaderT clientLoop (ThreadData h db wr)
+        clientForker socket db wr
 
 
-{-
-removeUser :: Text -> ServerApp ()
-removeUser name = do
-    echoLocal $ "Exception with " <> name <> ", removing from userTable"
-    broadcast Server $ name <> " has left the server"
-    modifyUserTable (M.delete name)
+diskWriter :: ServerApp ()
+diskWriter = forever $ do
+        write <- viewWrite >>= readMVarT
+        db <- viewDatabase >>= readMVarT
+
+        liftIO . threadDelay $ oneSecond
+        when write $ liftIO . saveDB Nothing $ db
+
+    where oneSecond = 1000000
+
+clientLoop :: ServerApp ()
+clientLoop =
+        flip catchError (\_ -> return ()) $ do
+          query <- getQuery
+          case query of
+            Nothing  -> return ()
+            (Just q) -> do serve q
+                           clientLoop
+
+echoLocal = liftIO . print
+echoMessage msg =
+        viewHandle >>= \h -> liftIO . T.hPutStrLn h $ msg
+
+getQuery :: ServerApp (Maybe ByteString)
+getQuery = viewHandle >>= liftIO . protoRead
 
 
-addUser :: ServerApp Text
-addUser = do
-    h <- viewHandle
-    dbMV <- viewDatabase
-    echoRemote "Enter username"
-    name <- T.filter ( /= '\r') <$> getRemoteLine
-    userTable <- takeMVarT dbMV
-
-    if name `M.member` userTable
-      then do echoRemote "Username already exists!"
-              putMVarT dbMV userTable
-              addUser
-
-      else do putMVarT dbMV (M.insert name h userTable)
-              broadcast Server $ name <> " has joined the server"
-              echoRemote "Welcome to the server!\n>> Other users:"
-              readMVarT dbMV >>=
-                  mapM_ (echoRemote . ("*" <>) . fst)
-                . filter (( /= name) . fst) . M.toList
-              return name
-
-broadcast :: Speaker -> Text -> ServerApp ()
-broadcast user msg =
-    viewDatabase >>= readMVarT >>= mapM_ (f . snd) . fn . M.toList
-  where f h = liftIO $ T.hPutStrLn h $ nm <> msg
-        (fn, nm) = case user of
-                    Server -> (id, ">> ")
-                    Client t -> (filter ((/=t) . fst), t <> "> ")
--}
-
-
-echoLocal :: Text -> ServerApp ()
-echoLocal = liftIO . T.putStrLn
-
-echoRemote :: Text -> ServerApp ()
-echoRemote = echoMessage . (">> " <>)
-
-echoMessage :: Text -> ServerApp ()
-echoMessage msg = viewHandle >>= \h -> liftIO . T.hPutStrLn h $ msg
-
-getRemoteLine :: ServerApp Text
-getRemoteLine = viewHandle >>= liftIO . T.hGetLine
-
-serve :: Text -> ServerApp ()
+serve :: ByteString -> ServerApp ()
 serve t = do
-    echoLocal $ "query: " <> t
-    dbMV <- viewDatabase
-    db <- takeMVarT dbMV
-    (result, newDB) <- query db t
-    echoRemote $ T.pack result
-    putMVarT dbMV newDB
-    return ()
+        dbMV <- viewDatabase
+        db <- takeMVarT dbMV
+
+        let (result, changed, newDB) = runAction db query
+        putMVarT dbMV newDB
+
+        showHeader changed query
+        viewHandle >>= \h -> liftIO . protoSend h . B8.pack $ result
+
+        wrMV <- viewWrite
+        wr <- takeMVarT wrMV
+
+        if changed
+            then putMVarT wrMV True
+            else putMVarT wrMV wr
+
+    where query = filter (not . null)
+                . map T.unpack
+                . T.split (== '\n') $ text
+          text = T.pack . B8.unpack $ t
 
 
-query :: Value -> Text -> ServerApp (String, Value)
-query db t = do
-    let (Action newDB output) = action baseAction q
-    return (intercalate "\n" output, newDB)
+runAction :: Value -> Operations -> (String, Bool, Value)
+runAction db query =
+        (result, changed, newDB)
     where
-          q :: Operations
-          q = map T.unpack . T.split (== ' ') $ t
+        (Action newDB changed output) = action baseAction query
+        baseAction = Action db False []
+        result = if null output || output == ["\n"]
+                   then ""
+                   else intercalate "\n" output ++ "\n"
 
-          baseAction = Action db []
+
+showHeader c query =
+        echoLocal $ changed ++ unwords query
+    where changed = (head . show $ c) : " "
 
 putMVarT  = (liftIO . ) . putMVar
+readMVarT = liftIO . readMVar
 takeMVarT = liftIO . takeMVar
--- readMVarT = liftIO . readMVar
 
-modifyUserTable fn = viewDatabase >>= \mv ->
-                     liftIO $ modifyMVar_ mv (return . fn)
-viewHandle = threadHandle <$> ask
-viewDatabase  = userTableMV  <$> ask
+viewHandle   = threadHandle <$> ask
+viewDatabase = userTableMV <$> ask
+viewWrite = writeRequest <$> ask
+
+getTime = getPOSIXTime
