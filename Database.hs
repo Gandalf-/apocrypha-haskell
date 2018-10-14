@@ -1,8 +1,12 @@
-module Database where
+module Database
+    ( Action(..)
+    , Operations
+    , action
+    , getDB, saveDB
+    )where
 
 import Data.Aeson
 
-import Control.Monad (unless)
 import Data.List (intercalate, sort)
 import Data.Maybe (fromMaybe)
 
@@ -14,31 +18,13 @@ import qualified Data.Vector as V
 
 
 data Action = Action
-            { value :: Value
-            , changed :: Bool
-            , result :: [String]
-            }
+        { value   :: Value
+        , changed :: Bool
+        , result  :: [String]
+        }
     deriving (Show, Eq)
 
 type Operations = [String]
-
-
-runner args = do
-    db <- getDB Nothing
-    case db of
-        Null -> putStrLn "Could not parse database"
-        _    -> handle db args
-
-
-handle :: Value -> Operations -> IO ()
-handle database args = do
-        saveDB Nothing newDB
-
-        unless (null output)
-            (putStrLn $ intercalate "\n" output)
-    where
-        (Action newDB _ output) = action baseAction args
-        baseAction = Action database False []
 
 
 action :: Action -> Operations -> Action
@@ -213,6 +199,7 @@ empty (Array  a) = V.null a
 empty (String s) = T.null s
 empty Null       = True
 empty _          = False
+
 
 pretty :: Value -> String
 pretty Null = ""

@@ -4,27 +4,21 @@ import System.Environment (getArgs)
 import Apocrypha.Client
 import Control.Concurrent.Async
 import Control.Concurrent
+import Control.Monad
 
 main = do
-        async consume
+        c <- getContext Nothing
+        mapM_ (\_ -> keys c []) [1..10000]
+
+
+readWrite = do
         async produce
-        async produce
-        async consume
         consume
 
+        where produce = withC (\c -> pop c    ["messages", "benchmark"])
+              consume = withC (\c -> append c ["messages", "benchmark"] "value")
 
-worker args a b = do
-        keys a $ args ++ ["devbot"]
-        keys b $ args ++ ["links"]
 
-consume = do
+withC f = do
         c <- getContext Nothing
-        result <- mapM (\_ -> pop c ["messages", "benchmark"]) [1..1000]
-        print . length $ result
-        cleanContext c
-
-produce = do
-        c <- getContext Nothing
-        result <- mapM (\_ -> append c ["messages", "benchmark"] "value") [1..1000]
-        print . length $ result
-        cleanContext c
+        forever f c

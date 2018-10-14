@@ -12,7 +12,6 @@ import Apocrypha.Network2
 import Database
 import Data.Aeson
 import Data.ByteString.Char8 (ByteString)
-import Data.Time.Clock.POSIX (getPOSIXTime)
 
 import qualified Data.ByteString.Char8 as B8
 import qualified Data.Text as T
@@ -22,17 +21,18 @@ import qualified Data.Text.IO as T
 type WriteReq = MVar Bool
 type Database = MVar Value
 type ServerApp = ReaderT ThreadData IO
+
 data ThreadData = ThreadData
-                { threadHandle :: Handle
-                , userTableMV  :: Database
-                , writeRequest :: WriteReq
-                }
+        { threadHandle :: Handle
+        , userTableMV  :: Database
+        , writeRequest :: WriteReq
+        }
 
 
 main :: IO ()
 main = do
         server <- listenOn $ PortNumber 9999
-        T.putStrLn "Server started"
+        putStrLn "Server started"
         db <- getDB Nothing
         case db of
             Null -> putStrLn "Could not parse database on disk"
@@ -62,6 +62,7 @@ diskWriter = forever $ do
 
     where oneSecond = 1000000
 
+
 clientLoop :: ServerApp ()
 clientLoop =
         flip catchError (\_ -> return ()) $ do
@@ -71,9 +72,6 @@ clientLoop =
             (Just q) -> do serve q
                            clientLoop
 
-echoLocal = liftIO . print
-echoMessage msg =
-        viewHandle >>= \h -> liftIO . T.hPutStrLn h $ msg
 
 getQuery :: ServerApp (Maybe ByteString)
 getQuery = viewHandle >>= liftIO . protoRead
@@ -83,7 +81,6 @@ serve :: ByteString -> ServerApp ()
 serve t = do
         dbMV <- viewDatabase
         db <- takeMVarT dbMV
-
         let (result, changed, newDB) = runAction db query
         putMVarT dbMV newDB
 
@@ -115,15 +112,18 @@ runAction db query =
 
 
 showHeader c query =
-        echoLocal $ changed ++ unwords query
-    where changed = (head . show $ c) : " "
+        echoLocal . take 80 $ changed ++ unwords query
+    where changed = (if c then '~' else ' ') : " "
+
 
 putMVarT  = (liftIO . ) . putMVar
 readMVarT = liftIO . readMVar
 takeMVarT = liftIO . takeMVar
 
 viewHandle   = threadHandle <$> ask
-viewDatabase = userTableMV <$> ask
-viewWrite = writeRequest <$> ask
+viewDatabase = userTableMV  <$> ask
+viewWrite    = writeRequest <$> ask
 
-getTime = getPOSIXTime
+echoLocal = liftIO . putStrLn
+echoMessage msg =
+        viewHandle >>= \h -> liftIO . T.hPutStrLn h $ msg

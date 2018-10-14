@@ -7,13 +7,13 @@ module Apocrypha.Network2
 import Network
 
 import Data.Binary (encode, decode)
-import GHC.IO.Handle.Types (Handle)
 import Data.List (intercalate)
+import GHC.IO.Handle.Types (Handle)
 
 import Data.ByteString.Char8 (ByteString)
-
 import qualified Data.ByteString.Lazy as B
 import qualified Data.ByteString.Char8 as B8
+
 
 type Context = Handle
 
@@ -37,20 +37,21 @@ protoRead h = do
             then return Nothing
             else do
                 let bytes = B8.append (B8.replicate 4 '\0') rawSize
-                    size = decode (B.fromStrict bytes) :: Int
+                    size  = decode (B.fromStrict bytes) :: Int
                 result <- B8.hGetSome h size
-                return $ Just result
+                return . Just $ result
 
 
 protocol :: ByteString -> ByteString
 protocol message =
-        B8.append len message
-        where len = B8.drop 4 . B.toStrict . encode . B8.length $ message
+        B8.append (len message) message
+
+    where len = B8.drop 4 . B.toStrict . encode . B8.length
 
 
 client :: Context -> [String] -> IO String
 client c query = do
-        protoSend c $ B8.pack $ intercalate "\n" query
+        protoSend c . B8.pack . intercalate "\n" $ query
         result <- protoRead c
         case result of
             Nothing  -> return ""
