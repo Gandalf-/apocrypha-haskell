@@ -13,6 +13,7 @@ import Database
 import Data.Aeson
 import Data.ByteString.Char8 (ByteString)
 
+import qualified Data.HashMap.Strict as HM
 import qualified Data.ByteString.Char8 as B8
 import qualified Data.Text as T
 import qualified Data.Text.IO as T
@@ -39,16 +40,15 @@ main = do
             _    -> do
                 dbMV <- newMVar db
                 wrMV <- newMVar False
-                _ <- async $
-                    runReaderT diskWriter (ThreadData stdout dbMV wrMV)
-                withSocketsDo . clientForker server dbMV $ wrMV
+                void . async $ runReaderT diskWriter (ThreadData stdout dbMV wrMV)
+                withSocketsDo $ clientForker server dbMV wrMV
 
 
 clientForker :: Socket -> Database -> WriteReq -> IO b
 clientForker socket db wr = do
         (h, _, _) <- accept socket
         hSetBuffering h NoBuffering
-        _ <- async $ runReaderT clientLoop (ThreadData h db wr)
+        void . async $ runReaderT clientLoop (ThreadData h db wr)
         clientForker socket db wr
 
 
@@ -57,7 +57,7 @@ diskWriter = forever $ do
         write <- viewWrite >>= readMVarT
         db <- viewDatabase >>= readMVarT
 
-        liftIO . threadDelay $ oneSecond
+        liftIO $ threadDelay oneSecond
         when write $ liftIO . saveDB Nothing $ db
 
     where oneSecond = 1000000
@@ -94,21 +94,25 @@ serve t = do
             then putMVarT wrMV True
             else putMVarT wrMV wr
 
-    where query = filter (not . null)
-                . map T.unpack
-                . T.split (== '\n') $ text
-          text = T.pack . B8.unpack $ t
+    where
+        query = filter (not . null)
+              . map T.unpack
+              . T.split (== '\n') $ text
+
+        text = T.pack . B8.unpack $ t
 
 
 runAction :: Value -> Operations -> (String, Bool, Value)
 runAction db query =
         (result, changed, newDB)
     where
-        (Action newDB changed output) = action baseAction query
+        (Action newDB changed output) =
+            case db of
+                (Object o) -> action baseAction query o
+                _          -> action baseAction query $ HM.fromList []
+
         baseAction = Action db False []
-        result = if null output || output == ["\n"]
-                   then ""
-                   else intercalate "\n" output ++ "\n"
+        result = intercalate "\n" output ++ "\n"
 
 
 showHeader c query =
