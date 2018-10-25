@@ -1,16 +1,16 @@
 {-# LANGUAGE FlexibleInstances #-}
 
-module Apocrypha.Client
+module Network.Apocrypha.Client
     ( keys,  get,  set,  del , pop , append
     , keys', get', set', del', pop', append'
     , Context, getContext
     ) where
 
-import           Apocrypha.Network
 import           Data.Aeson
+import           Network.Apocrypha.Protocol
 
-import qualified Data.ByteString.Char8 as B8
-import qualified Data.ByteString.Lazy  as B
+import qualified Data.ByteString.Char8      as B8
+import qualified Data.ByteString.Lazy       as B
 
 
 keys :: Context -> [String] -> IO [String]

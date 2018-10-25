@@ -1,4 +1,4 @@
-module Apocrypha.Network
+module Network.Apocrypha.Protocol
     ( client, jClient
     , Context, getContext
     , protoSend, protoRead

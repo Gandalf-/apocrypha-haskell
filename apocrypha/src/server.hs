@@ -1,22 +1,22 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 import           Control.Concurrent
-import           Control.Concurrent.Async (async)
+import           Control.Concurrent.Async   (async)
 import           Control.Monad.Except
 import           Control.Monad.Reader
-import           Data.ByteString.Char8    (ByteString)
-import           Data.List                (intercalate)
+import           Data.ByteString.Char8      (ByteString)
+import           Data.List                  (intercalate)
 import           Network
-import           System.Directory         (getHomeDirectory)
+import           System.Directory           (getHomeDirectory)
 import           System.IO
 
-import           Apocrypha.Database
-import           Apocrypha.Network
 import           Data.Aeson
+import           Network.Apocrypha.Database
+import           Network.Apocrypha.Protocol
 
-import qualified Data.ByteString.Char8    as B8
-import qualified Data.HashMap.Strict      as HM
-import qualified Data.Text                as T
+import qualified Data.ByteString.Char8      as B8
+import qualified Data.HashMap.Strict        as HM
+import qualified Data.Text                  as T
 
 
 type WriteReq = MVar Bool

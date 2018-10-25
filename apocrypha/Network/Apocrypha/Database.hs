@@ -1,4 +1,4 @@
-module Apocrypha.Database
+module Network.Apocrypha.Database
 ( Action(..)
 , Operations
 , action
