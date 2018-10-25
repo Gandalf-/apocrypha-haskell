@@ -1,22 +1,22 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-import Control.Concurrent
-import Control.Concurrent.Async (async)
-import Control.Monad.Except
-import Control.Monad.Reader
-import Data.List (intercalate)
-import Network
-import System.IO
+import           Control.Concurrent
+import           Control.Concurrent.Async (async)
+import           Control.Monad.Except
+import           Control.Monad.Reader
+import           Data.ByteString.Char8    (ByteString)
+import           Data.List                (intercalate)
+import           Network
+import           System.Directory         (getHomeDirectory)
+import           System.IO
 
-import Apocrypha.Network2
-import Database
-import Data.Aeson
-import Data.ByteString.Char8 (ByteString)
+import           Apocrypha.Database
+import           Apocrypha.Network
+import           Data.Aeson
 
-import qualified Data.HashMap.Strict as HM
-import qualified Data.ByteString.Char8 as B8
-import qualified Data.Text as T
-import qualified Data.Text.IO as T
+import qualified Data.ByteString.Char8    as B8
+import qualified Data.HashMap.Strict      as HM
+import qualified Data.Text                as T
 
 
 type WriteReq = MVar Bool
@@ -34,7 +34,8 @@ main :: IO ()
 main = do
         server <- listenOn $ PortNumber 9999
         putStrLn "Server started"
-        db <- getDB Nothing
+        dbPath <- (++ "/.db.json") <$> getHomeDirectory
+        db <- getDB $ Just dbPath
         case db of
             Null -> putStrLn "Could not parse database on disk"
             _    -> do
@@ -74,10 +75,13 @@ clientLoop =
 
 
 getQuery :: ServerApp (Maybe ByteString)
+-- ^ Read a client query from our network handle
 getQuery = viewHandle >>= liftIO . protoRead
 
 
 serve :: ByteString -> ServerApp ()
+-- ^ Run a user query through the database, and send them the result.
+-- If the database reports that it changed, we set writeRequest.
 serve t = do
         dbMV <- viewDatabase
         db <- takeMVarT dbMV
@@ -124,10 +128,8 @@ putMVarT  = (liftIO . ) . putMVar
 readMVarT = liftIO . readMVar
 takeMVarT = liftIO . takeMVar
 
-viewHandle   = threadHandle <$> ask
-viewDatabase = userTableMV  <$> ask
-viewWrite    = writeRequest <$> ask
+viewHandle   = asks threadHandle
+viewDatabase = asks userTableMV
+viewWrite    = asks writeRequest
 
 echoLocal = liftIO . putStrLn
-echoMessage msg =
-        viewHandle >>= \h -> liftIO . T.hPutStrLn h $ msg

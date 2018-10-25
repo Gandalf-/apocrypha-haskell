@@ -3,14 +3,14 @@
 module Apocrypha.Client
     ( keys,  get,  set,  del , pop , append
     , keys', get', set', del', pop', append'
-    , Context, getContext, cleanContext
+    , Context, getContext
     ) where
 
-import Data.Aeson
-import Apocrypha.Network
+import           Apocrypha.Network
+import           Data.Aeson
 
 import qualified Data.ByteString.Char8 as B8
-import qualified Data.ByteString.Lazy as B
+import qualified Data.ByteString.Lazy  as B
 
 
 keys :: Context -> [String] -> IO [String]
@@ -20,10 +20,7 @@ keys c items = do
 
 keys' items = do
     c <- getContext Nothing
-    r <- keys c items
-    cleanContext c
-    return r
-
+    keys c items
 
 del :: Context -> [String] -> IO ()
 del con items = do
@@ -32,9 +29,7 @@ del con items = do
 
 del' items = do
     c <- getContext Nothing
-    r <- del c items
-    cleanContext c
-    return r
+    del c items
 
 
 set :: (ToJSON a) => Context -> [String] -> a -> IO ()
@@ -45,21 +40,19 @@ set context items value = do
 
 set' items value = do
     c <- getContext Nothing
-    r <- set c items value
-    cleanContext c
-    return r
+    set c items value
 
 
 get :: (FromJSON a) => Context -> [String] -> IO (Maybe a)
 get context items = do
-    m <- jClient context $ items ++ ["--edit"]
-    return (Data.Aeson.decode m :: (FromJSON a) => Maybe a)
+    result <- jClient context $ items ++ ["--edit"]
+    case result of
+        Just m  -> return (Data.Aeson.decode m :: (FromJSON a) => Maybe a)
+        Nothing -> return Nothing
 
 get' items = do
     c <- getContext Nothing
-    r <- get c items
-    cleanContext c
-    return r
+    get c items
 
 
 append :: Context -> [String] -> String -> IO ()
@@ -69,8 +62,7 @@ append context items value = do
 
 append' items value = do
     c <- getContext Nothing
-    _ <- append c items value
-    cleanContext c
+    append c items value
 
 
 pop :: Context -> [String] -> IO (Maybe String)
@@ -79,6 +71,4 @@ pop context items =
 
 pop' items = do
     c <- getContext Nothing
-    r <- pop c items
-    cleanContext c
-    return r
+    pop c items

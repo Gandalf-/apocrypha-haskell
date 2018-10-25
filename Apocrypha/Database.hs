@@ -1,20 +1,20 @@
-module Database
-    ( Action(..)
-    , Operations
-    , action
-    , getDB, saveDB
-    )where
+module Apocrypha.Database
+( Action(..)
+, Operations
+, action
+, getDB, saveDB
+) where
 
-import Data.Aeson
+import           Data.Aeson
 
-import Data.List (intercalate, sort)
-import Data.Maybe (fromMaybe)
+import           Data.List             (intercalate, sort)
+import           Data.Maybe            (fromMaybe)
 
-import qualified Data.ByteString.Lazy as B
 import qualified Data.ByteString.Char8 as B8
-import qualified Data.HashMap.Strict as HM
-import qualified Data.Text as T
-import qualified Data.Vector as V
+import qualified Data.ByteString.Lazy  as B
+import qualified Data.HashMap.Strict   as HM
+import qualified Data.Text             as T
+import qualified Data.Vector           as V
 
 
 data Action = Action
@@ -121,7 +121,8 @@ action (Action (Array a) _ output) ("-" : values) _ =
             else Action (Array  new) True output
     where
         new :: V.Vector Value
-        new   = V.filter (`notElem` right) a
+        new = V.filter (`notElem` right) a
+
         right = V.fromList . map (String . T.pack) $ values
 
 -- subtract - string
@@ -130,6 +131,7 @@ action (Action value@(String s) c output) ("-" : v) _ =
             then Action Null  True output
             else Action value c    output
     where
+        values :: [T.Text]
         values = map T.pack v
 
 -- subtract - bottom
@@ -138,14 +140,15 @@ action (Action a _ _) ("-" : _) _ =
 
 
 -- pop - array
-action (Action (Array a) _ output) ("--pop" : _) _ =
-        Action (Array . V.tail $ a) True $ output ++ pretty value
+action (Action (Array a) _ _) ("--pop" : _) _ =
+        Action (Array $ V.tail a) True value
 
-    where value = V.head a
+    where
+        value = pretty $ V.head a
 
 -- pop - string
-action (Action (String s) _ output) ("--pop" : _) _ =
-        Action Null True $ output ++ [T.unpack s]
+action (Action (String s) _ _) ("--pop" : _) _ =
+        Action Null True [T.unpack s]
 
 -- pop - object
 action (Action db@(Object o) _ output) ("--pop" : _) _ =
@@ -162,19 +165,20 @@ action (Action a _ _) ("--pop" : _) _ =
 
 
 -- edit
-action (Action value c output) ("--edit" : _) _ =
+action (Action value c _) ("--edit" : _) _ =
         Action value c [dump value]
 
 
 -- index
-action a@(Action (Object o) c r) (k : xs) t =
+action a@(Action (Object o) changed output) (k : xs) t =
         if deref
             then dereference a (derefK : xs) t
-            else Action new newC $ r ++ res
+            else Action newBase newChanged $ output ++ newOutput
     where
-        (Action newValue newC res) = action (Action childDB c r) xs t
+        (Action newValue newChanged newOutput) =
+            action (Action childDB changed output) xs t
 
-        new     = Object
+        newBase = Object
                 . HM.filter (not . empty)
                 . HM.insert key newValue $ o
 
@@ -191,28 +195,30 @@ action (Action db _ _) _ _ =
 
 
 dereference :: Action -> Operations -> Top -> Action
-dereference original (k : xs) t =
-        if key `elem` HM.keys t
+dereference original (k : xs) top =
+        if key `elem` HM.keys top
             then case value of
                      -- the dereferenced value is just a string
-                     (String s) -> action newBase (T.unpack s : xs) t
+                     (String s) -> action newBase (T.unpack s : xs) top
 
                      -- the dereferenced value is an array, we have to
                      -- apply the remaining arguments to each member
-                     (Array a)  -> foldl (apply t xs) newBase a
+                     (Array a)  -> foldl (apply top xs) newBase a
                      _          -> original
 
             else original
 
     where
-        newBase = Action (Object t) False []
-        value = HM.lookupDefault Null key t
+        newBase = Action (Object top) False []
+        value = HM.lookupDefault Null key top
         key = T.pack k
+
+dereference a [] _ = a
 
 
 apply :: Top -> Operations -> Action -> Value -> Action
 apply t xs a (String s) = action a (T.unpack s : xs) t
-apply _ _ a _ = a
+apply _ _ a _           = a
 
 
 -- json utilities
@@ -241,9 +247,11 @@ pretty v@(Object o) =
             then []
             else result
     where
+        result :: [String]
         result = [tail . init $ go (dump v) 0]
+
         go :: String -> Int -> String
-        go [] _ = "\n"
+        go [] _        = "\n"
         go ('{': cs) d = "\n" ++ replicate d ' ' ++ go cs (d + 2)
         go ('[': cs) d = "\n" ++ replicate d ' ' ++ go cs (d + 2)
 
