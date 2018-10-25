@@ -5,17 +5,17 @@
 
 module Devbot where
 
+import           Apocrypha.Client
 import           GHC.Generics
-import           Network.Apocrypha.Client
 
 import           Data.Aeson
 
-import           Data.Foldable            (asum)
-import           Data.Maybe               (fromMaybe)
-import           Text.Read                (readMaybe)
+import           Data.Foldable       (asum)
+import           Data.Maybe          (fromMaybe)
+import           Text.Read           (readMaybe)
 
-import qualified Data.HashMap.Strict      as HM
-import qualified Data.Text                as T
+import qualified Data.HashMap.Strict as HM
+import qualified Data.Text           as T
 
 
 type ConfigMap = HM.HashMap String Config
@@ -28,9 +28,9 @@ type Name = String
 
 
 data Data = Data
-          { duration :: Integer
-          , when     :: Integer
-          , errors   :: Maybe Integer
+          { duration :: !Integer
+          , when     :: !Integer
+          , errors   :: !(Maybe Integer)
           }
     deriving (Show, Eq, Generic)
 
@@ -41,9 +41,9 @@ instance ToJSON Data where
 
 
 data Config = Config
-            { action   :: [String]
-            , interval :: Integer
-            , require  :: Maybe String
+            { action   :: ![String]
+            , interval :: !Integer
+            , require  :: !(Maybe String)
             }
     deriving (Eq, Show, Generic)
 
@@ -70,17 +70,17 @@ instance FromJSON Config where
         require  <- o .:? "require"
 
         return Config{..}
-        where
-              parse :: String -> Integer
-              parse "hourly" = hour
-              parse "daily"  = daily
-              parse "weekly" = weekly
-              parse n        = fromMaybe daily (readMaybe n :: Maybe Integer)
+      where
+          parse :: String -> Integer
+          parse "hourly" = hour
+          parse "daily"  = daily
+          parse "weekly" = weekly
+          parse n        = fromMaybe daily (readMaybe n :: Maybe Integer)
 
-              weekly = daily * 7
-              daily  = hour * 24
-              hour   = minute * 60
-              minute = 60
+          weekly = daily * 7
+          daily  = hour * 24
+          hour   = minute * 60
+          minute = 60
 
 instance ToJSON Config where
     toEncoding = genericToEncoding defaultOptions
@@ -97,7 +97,7 @@ events = do
 
         parse :: (String, Config) -> Event
         parse (name, config) =
-            Event name config . fromMaybe defaultData . HM.lookup name $ datas
+            Event name config . fromMaybe defaultData $ HM.lookup name datas
 
     return $ map parse configs
     where

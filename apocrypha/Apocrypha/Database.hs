@@ -1,9 +1,9 @@
-module Network.Apocrypha.Database
-( Action(..)
-, Operations
-, action
-, getDB, saveDB
-) where
+module Apocrypha.Database
+    ( Action(..)
+    , Operations
+    , action
+    , getDB, saveDB
+    ) where
 
 import           Data.Aeson
 
@@ -18,9 +18,9 @@ import qualified Data.Vector           as V
 
 
 data Action = Action
-        { value   :: Value
-        , changed :: Bool
-        , result  :: [String]
+        { value   :: !Value
+        , changed :: !Bool
+        , result  :: ![String]
         }
     deriving (Show, Eq)
 
@@ -207,7 +207,6 @@ dereference original (k : xs) top =
                      _          -> original
 
             else original
-
     where
         newBase = Action (Object top) False []
         value = HM.lookupDefault Null key top

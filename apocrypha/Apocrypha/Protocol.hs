@@ -1,4 +1,4 @@
-module Network.Apocrypha.Protocol
+module Apocrypha.Protocol
     ( client, jClient
     , Context, getContext
     , protoSend, protoRead
@@ -52,7 +52,6 @@ protoRead h = do
 protocol :: ByteString -> ByteString
 protocol message =
         B8.append (len message) message
-
     where len = B8.drop 4 . B.toStrict . encode . B8.length
 
 
@@ -65,6 +64,7 @@ client (Just c) query = do
         case result of
             Nothing -> return Nothing
             Just s  -> return . Just . B8.unpack $ s
+
 
 jClient :: Context -> [String] -> IO (Maybe B.ByteString)
 jClient Nothing _ = return Nothing

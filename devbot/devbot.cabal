@@ -70,8 +70,8 @@ library
     ColorText
 
   other-modules:
-    Network.Apocrypha.Client
-    Network.Apocrypha.Protocol
+    Apocrypha.Client
+    Apocrypha.Protocol
 
   default-language:    Haskell2010
   build-depends:

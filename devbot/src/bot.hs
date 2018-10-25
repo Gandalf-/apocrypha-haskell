@@ -1,26 +1,28 @@
 module Main where
 
+import           Apocrypha.Client
 import           Devbot
-import           Network.Apocrypha.Client
 
-import           Control.Concurrent       (threadDelay)
-
-import           Data.List                (intercalate)
-import           Data.Time.Clock.POSIX    (getPOSIXTime)
-
-import           System.Exit              (ExitCode (..))
-import           System.IO                (BufferMode (..), hSetBuffering,
-                                           stdout)
-import           System.Process           (ProcessHandle, getProcessExitCode,
-                                           spawnCommand, waitForProcess)
+import           Control.Concurrent    (threadDelay)
+import           Data.List             (intercalate)
+import           Data.Time.Clock.POSIX (getPOSIXTime)
+import           System.Exit           (ExitCode (..))
+import           System.IO             (BufferMode (..), hSetBuffering, stdout)
+import           System.Process        (ProcessHandle, getProcessExitCode,
+                                        spawnCommand, waitForProcess)
 
 type State = [Task]
-data Task = Task Event (Maybe ProcessHandle) StartTime
+data Task = Task
+          { event   :: Event
+          , process :: Maybe ProcessHandle
+          , start   :: StartTime
+          }
+
 type StartTime = Integer
 
 
 startingState :: [Event] -> State
-startingState = map (\event -> Task event Nothing 0)
+startingState = map (\ event -> Task event Nothing 0)
 
 
 runner :: Integer -> State -> IO State
@@ -191,7 +193,7 @@ requirementsMet n (Config _ _ (Just r)) = do
 
 
 getTime :: IO Integer
-getTime = round `fmap` getPOSIXTime
+getTime = round <$> getPOSIXTime
 
 
 main :: IO ()
@@ -201,6 +203,5 @@ main = do
 
     loop
     where loop = do
-            es <- events
-            _ <- runner 1 $ startingState es
+            _ <- events >>= runner 1 . startingState
             loop

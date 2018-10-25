@@ -1,19 +1,18 @@
 module Main where
 
-import           Network.Apocrypha.Client (keys)
-import           System.Directory         (doesFileExist, getHomeDirectory)
-import           System.Exit              (ExitCode (..))
-import           System.Process           (spawnCommand, waitForProcess)
+import           Apocrypha.Client (keys)
+import           System.Directory (doesFileExist, getHomeDirectory)
+import           System.Exit      (ExitCode (..))
+import           System.Process   (spawnCommand, waitForProcess)
 
 
 main :: IO ()
 main = do
-    databaseAlive <- checkAlive
+        databaseAlive <- checkAlive
 
-    if databaseAlive
-        then checkStarted
-        else status Database
-
+        if databaseAlive
+            then checkStarted
+            else status Database
     where
         checkAlive :: IO Bool
         checkAlive = not . null <$> keys Nothing ["devbot"]
@@ -21,26 +20,29 @@ main = do
 
 checkStarted :: IO ()
 checkStarted = do
-    pExists <- pfile >>= doesFileExist
+        pExists <- pfile >>= doesFileExist
 
-    if pExists
-        then checkRunning
-        else status Stopped
+        if pExists
+            then checkRunning
+            else status Stopped
 
 
 checkRunning :: IO ()
 checkRunning = do
-    pid  <- pfile >>= readFile
-    code <- spawnCommand ("kill -0 " ++ pid) >>= waitForProcess
+        pid  <- pfile >>= readFile
+        code <- spawnCommand ("kill -0 " ++ pid) >>= waitForProcess
 
-    case code of
-        ExitSuccess -> status Running
-        _           -> status StalePid
+        case code of
+            ExitSuccess -> status Running
+            _           -> status StalePid
 
 
 pfile = (++ "/.devbot/pid") <$> getHomeDirectory
 
-data Status = Stopped | Running | StalePid | Database
+data Status = Stopped
+            | Running
+            | StalePid
+            | Database
 
 status Running  = putStrLn "✓"
 status Stopped  = putStrLn "✗"

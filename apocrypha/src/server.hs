@@ -1,22 +1,22 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 import           Control.Concurrent
-import           Control.Concurrent.Async   (async)
+import           Control.Concurrent.Async (async)
 import           Control.Monad.Except
 import           Control.Monad.Reader
-import           Data.ByteString.Char8      (ByteString)
-import           Data.List                  (intercalate)
+import           Data.ByteString.Char8    (ByteString)
+import           Data.List                (intercalate)
 import           Network
-import           System.Directory           (getHomeDirectory)
+import           System.Directory         (getHomeDirectory)
 import           System.IO
 
+import           Apocrypha.Database
+import           Apocrypha.Protocol
 import           Data.Aeson
-import           Network.Apocrypha.Database
-import           Network.Apocrypha.Protocol
 
-import qualified Data.ByteString.Char8      as B8
-import qualified Data.HashMap.Strict        as HM
-import qualified Data.Text                  as T
+import qualified Data.ByteString.Char8    as B8
+import qualified Data.HashMap.Strict      as HM
+import qualified Data.Text                as T
 
 
 type WriteReq = MVar Bool
@@ -31,6 +31,8 @@ data ThreadData = ThreadData
 
 
 main :: IO ()
+-- ^ set up the listening socket, read the database from disk and start
+-- initial worker threads
 main = do
         server <- listenOn $ PortNumber 9999
         putStrLn "Server started"
@@ -46,6 +48,7 @@ main = do
 
 
 clientForker :: Socket -> Database -> WriteReq -> IO b
+-- ^ listen for clients, fork off workers
 clientForker socket db wr = do
         (h, _, _) <- accept socket
         hSetBuffering h NoBuffering
@@ -54,17 +57,19 @@ clientForker socket db wr = do
 
 
 diskWriter :: ServerApp ()
+-- ^ checks if a write to disk is necessary once per second
+-- done in a separate thread so client threads can run faster
 diskWriter = forever $ do
         write <- viewWrite >>= readMVarT
         db <- viewDatabase >>= readMVarT
 
         liftIO $ threadDelay oneSecond
         when write $ liftIO . saveDB Nothing $ db
-
     where oneSecond = 1000000
 
 
 clientLoop :: ServerApp ()
+-- ^ read queries from the client, serve them or quit
 clientLoop =
         flip catchError (\_ -> return ()) $ do
           query <- getQuery
@@ -88,7 +93,7 @@ serve t = do
         let (result, changed, newDB) = runAction db query
         putMVarT dbMV newDB
 
-        showHeader changed query
+        queryLogger changed query
         viewHandle >>= \h -> liftIO . protoSend h . B8.pack $ result
 
         wrMV <- viewWrite
@@ -97,7 +102,6 @@ serve t = do
         if changed
             then putMVarT wrMV True
             else putMVarT wrMV wr
-
     where
         query = filter (not . null)
               . map T.unpack
@@ -107,6 +111,7 @@ serve t = do
 
 
 runAction :: Value -> Operations -> (String, Bool, Value)
+-- ^ run the query through the database and produce the artifacts
 runAction db query =
         (result, changed, newDB)
     where
@@ -119,7 +124,9 @@ runAction db query =
         result = intercalate "\n" output ++ "\n"
 
 
-showHeader c query =
+queryLogger :: Bool -> [String] -> ServerApp ()
+-- ^ write a summary of the query to stdout
+queryLogger c query =
         echoLocal . take 80 $ changed ++ unwords query
     where changed = (if c then '~' else ' ') : " "
 
