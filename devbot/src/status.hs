@@ -1,6 +1,6 @@
 module Main where
 
-import           Apocrypha.Client (keys)
+import           Apocrypha.Client (keys')
 import           System.Directory (doesFileExist, getHomeDirectory)
 import           System.Exit      (ExitCode (..))
 import           System.Process   (spawnCommand, waitForProcess)
@@ -15,7 +15,7 @@ main = do
             else status Database
     where
         checkAlive :: IO Bool
-        checkAlive = not . null <$> keys Nothing ["devbot"]
+        checkAlive = not . null <$> keys' ["devbot"]
 
 
 checkStarted :: IO ()
