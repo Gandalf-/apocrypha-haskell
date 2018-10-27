@@ -9,6 +9,7 @@ import           Data.Aeson
 
 import           Data.List             (intercalate, sort)
 import           Data.Maybe            (fromMaybe)
+import           System.Directory      (getHomeDirectory)
 
 import qualified Data.ByteString.Char8 as B8
 import qualified Data.ByteString.Lazy  as B
@@ -173,10 +174,12 @@ action (Action value c _) ("--edit" : _) _ =
 action a@(Action (Object o) changed output) (k : xs) t =
         if deref
             then dereference a (derefK : xs) t
-            else Action newBase newChanged $ output ++ newOutput
+            else Action newBase newChanged result
     where
+        result = output ++ newOutput
+
         (Action newValue newChanged newOutput) =
-            action (Action childDB changed output) xs t
+            action (Action childDB changed []) xs t
 
         newBase = Object
                 . HM.filter (not . empty)
@@ -203,7 +206,7 @@ dereference original (k : xs) top =
 
                      -- the dereferenced value is an array, we have to
                      -- apply the remaining arguments to each member
-                     (Array a)  -> foldl (apply top xs) newBase a
+                     (Array a)  -> foldr (apply top xs) newBase a
                      _          -> original
 
             else original
@@ -215,9 +218,9 @@ dereference original (k : xs) top =
 dereference a [] _ = a
 
 
-apply :: Top -> Operations -> Action -> Value -> Action
-apply t xs a (String s) = action a (T.unpack s : xs) t
-apply _ _ a _           = a
+apply :: Top -> Operations -> Value -> Action -> Action
+apply t xs (String s) a = action a (T.unpack s : xs) t
+apply _ _ _ a           = a
 
 
 -- json utilities
@@ -272,14 +275,16 @@ dbError :: Value -> String -> Action
 dbError v msg = Action v False ["error: " ++ msg]
 
 
-getDB :: Maybe FilePath -> IO Value
-getDB f = fromMaybe Null . decodeStrict . B8.pack <$> readFile file
-    where file = fromMaybe defaultDB f
+getDB :: IO Value
+getDB = do
+        file <- defaultDB
+        fromMaybe Null . decodeStrict . B8.pack <$> readFile file
 
 
-saveDB :: Maybe FilePath -> Value -> IO ()
-saveDB f = B.writeFile file . encode
-    where file = fromMaybe defaultDB f
+saveDB :: Value -> IO ()
+saveDB value = do
+        file <- defaultDB
+        B.writeFile file $ encode value
 
 
-defaultDB = "/tmp/db.json"
+defaultDB = (++ "/.db.json") <$> getHomeDirectory

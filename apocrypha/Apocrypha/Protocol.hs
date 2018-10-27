@@ -45,14 +45,24 @@ protoRead h = do
             else do
                 let bytes = B8.append (B8.replicate 4 '\0') rawSize
                     size  = decode (B.fromStrict bytes) :: Int
-                result <- B8.hGetSome h size
+                result <- reader h B8.empty size
                 return . Just $ result
+    where
+        reader :: Handle -> ByteString -> Int -> IO ByteString
+        reader h base n
+            | n <= 0    = return base
+            | otherwise = do
+                 here <- B8.hGetSome h n
+                 next <- reader h here (n - B8.length here)
+                 return $ B8.append base next
 
 
 protocol :: ByteString -> ByteString
 protocol message =
         B8.append (len message) message
-    where len = B8.drop 4 . B.toStrict . encode . B8.length
+    where
+        len :: ByteString -> ByteString
+        len = B8.drop 4 . B.toStrict . encode . B8.length
 
 
 client :: Context -> [String] -> IO (Maybe String)

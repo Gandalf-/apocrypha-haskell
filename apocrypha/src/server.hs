@@ -7,7 +7,6 @@ import           Control.Monad.Reader
 import           Data.ByteString.Char8    (ByteString)
 import           Data.List                (intercalate)
 import           Network
-import           System.Directory         (getHomeDirectory)
 import           System.IO
 
 import           Apocrypha.Database
@@ -36,8 +35,8 @@ main :: IO ()
 main = do
         server <- listenOn $ PortNumber 9999
         putStrLn "Server started"
-        dbPath <- (++ "/.db.json") <$> getHomeDirectory
-        db <- getDB $ Just dbPath
+        db <- getDB
+
         case db of
             Null -> putStrLn "Could not parse database on disk"
             _    -> do
@@ -64,7 +63,7 @@ diskWriter = forever $ do
         db <- viewDatabase >>= readMVarT
 
         liftIO $ threadDelay oneSecond
-        when write $ liftIO . saveDB Nothing $ db
+        when write $ liftIO $ saveDB db
     where oneSecond = 1000000
 
 

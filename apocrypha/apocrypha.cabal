@@ -19,7 +19,7 @@ executable d
 
   ghc-options:
     -Wall -Wno-type-defaults -Wno-missing-signatures -Wno-name-shadowing
-    -dynamic -O
+    -O
 
   build-depends:
     base >= 4.7 && < 5,
@@ -32,7 +32,7 @@ executable apocrypha-server
 
   ghc-options:
     -Wall -Wno-type-defaults -Wno-missing-signatures -Wno-name-shadowing
-    -dynamic -O -threaded
+    -O -threaded
 
   build-depends:
     base >= 4.7 && < 5,
@@ -42,7 +42,6 @@ executable apocrypha-server
     text,
     unordered-containers,
     bytestring,
-    directory,
     mtl,
     async
 
@@ -66,4 +65,5 @@ library
     bytestring,
     vector,
     unordered-containers,
+    directory,
     binary
