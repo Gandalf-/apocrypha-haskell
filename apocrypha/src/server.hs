@@ -118,7 +118,7 @@ runAction db query =
         baseAction :: Action
         baseAction =
             case db of
-                (Object o) -> Action db False [] o False
+                (Object o) -> Action db False [] o (Context False [])
                 _          -> error "database top level is not a map"
 
         result :: String

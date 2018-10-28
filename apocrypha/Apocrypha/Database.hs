@@ -1,6 +1,7 @@
 module Apocrypha.Database
     ( Action(..)
     , Operations
+    , Context(..)
     , action
     , getDB, saveDB
     ) where
@@ -23,11 +24,17 @@ data Action = Action
         , changed :: !Bool
         , result  :: ![String]
         , top     :: !Object
-        , context :: Bool
+        , context :: !Context
         }
     deriving (Show, Eq)
 
 type Operations = [String]
+
+data Context = Context
+        { enabled :: !Bool
+        , members :: ![String]
+        }
+    deriving (Show, Eq)
 
 
 action :: Action -> Operations -> Action
@@ -42,8 +49,8 @@ action a ("-c" : v) = action a ("--context" : v)
 
 
 -- context
-action (Action v c r t _) ("--context" : xs) =
-        action (Action v c r t True) xs
+action (Action v c r t (Context _ m)) ("--context" : xs) =
+        action (Action v c r t (Context True m)) xs
 
 
 -- get
@@ -51,10 +58,7 @@ action (Action value _ _ t context) [] =
         Action value False result t context
     where
         result :: [String]
-        result =
-            if context
-                then map ("= " ++) $ pretty value
-                else pretty value
+        result = pretty context value
 
 
 -- keys - object
@@ -112,8 +116,8 @@ action (Action (Array a  ) _ output t c) ("+" : values) =
 
 -- append - object
 action (Action db@(Object o) _ output t c) ("+" : values) =
-    -- we allow appending to a dictionary only if it's empty,
-    -- since that means it's new and hasn't been assigned a value
+        -- we allow appending to a dictionary only if it's empty,
+        -- since that means it's new and hasn't been assigned a value
         if HM.null o
             then action emptyAction ("+" : values)
             else dbError db "cannot append to a dictionary"
@@ -163,7 +167,7 @@ action (Action a _ _ _ _) ("-" : _) =
 action (Action (Array a) _ _ t c) ("--pop" : _) =
         Action (Array $ V.tail a) True value t c
     where
-        value = pretty $ V.head a
+        value = pretty c $ V.head a
 
 -- pop - string
 action (Action (String s) _ _ t c) ("--pop" : _) =
@@ -171,8 +175,8 @@ action (Action (String s) _ _ t c) ("--pop" : _) =
 
 -- pop - object
 action (Action db@(Object o) _ output t c) ("--pop" : _) =
-    -- we allow popping from a dictionary only if it's empty,
-    -- since that means it's new and hasn't been assigned a value
+        -- we allow popping from a dictionary only if it's empty,
+        -- since that means it's new and hasn't been assigned a value
         if HM.null o
             then Action db False output t c
             else dbError db "cannot pop from a dictionary"
@@ -195,22 +199,20 @@ action a@(Action (Object o) changed output t context) (k : xs) =
             else Action newBase newChanged result t context
     where
         (Action newValue newChanged newOutput _ _) =
-            action (Action childDB changed [] t context) xs
+            action (Action nextDB changed [] t nextContext) xs
 
         newBase :: Value
         newBase = Object
                 . HM.filter (not . empty)
                 . HM.insert key newValue $ o
 
-        childDB :: Value
-        childDB  = HM.lookupDefault newEntry key o
+        nextDB :: Value
+        nextDB  = HM.lookupDefault (Object $ HM.fromList []) key o
 
-        newEntry :: Value
-        newEntry = Object $ HM.fromList []
+        nextContext :: Context
+        nextContext = Context (enabled context) (members context ++ [k])
 
-        result  = if context
-                      then output ++ map ((k ++ " ") ++) newOutput
-                      else output ++ newOutput
+        result  = output ++ newOutput
         key     = T.pack k
         deref   = head k == '!'
         derefK  = tail k
@@ -240,12 +242,11 @@ dereference original@(Action _ _ _ top c)  (k : xs) =
         value = HM.lookupDefault Null key top
         key = T.pack k
 
+        apply :: Operations -> Value -> Action -> Action
+        apply xs (String s) a = action a (T.unpack s : xs)
+        apply _ _ a           = a
+
 dereference a [] = a
-
-
-apply :: Operations -> Value -> Action -> Action
-apply xs (String s) a = action a (T.unpack s : xs)
-apply _ _ a           = a
 
 
 -- json utilities
@@ -266,10 +267,10 @@ empty Null       = True
 empty _          = False
 
 
-pretty :: Value -> [String]
-pretty Null = []
-pretty (Array v) = [intercalate "\n" . concatMap pretty . V.toList $ v]
-pretty v@(Object o) =
+pretty :: Context -> Value -> [String]
+pretty _ Null = []
+pretty c (Array v) = [intercalate "\n" . concatMap (pretty c) . V.toList $ v]
+pretty _ v@(Object o) =
         if HM.null o
             then []
             else result
@@ -291,14 +292,27 @@ pretty v@(Object o) =
         go (':': cs) d = ": " ++ go cs d
         go (c  : cs) d = c : go cs d
 
-pretty (String s) = [T.unpack s]
-pretty v = [show v]
+pretty (Context True m) (String s) = addContext m $ T.unpack s
+pretty (Context _ _)    (String s) = [T.unpack s]
+
+pretty (Context True m) v = addContext m $ show v
+pretty (Context _ _)    v = [show v]
+
+
+addContext :: [String] -> String -> [String]
+addContext members value =
+        [intercalate " = " $ safeInit members ++ [value]]
+
+
+safeInit :: [a] -> [a]
+safeInit [] = []
+safeInit xs = init xs
 
 
 -- IO utilities
 dbError :: Value -> String -> Action
 dbError v msg =
-        Action v False ["error: " ++ msg] HM.empty False
+        Action v False ["error: " ++ msg] HM.empty (Context False [])
 
 
 getDB :: IO Value
