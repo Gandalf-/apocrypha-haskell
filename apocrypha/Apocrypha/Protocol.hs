@@ -46,7 +46,7 @@ protoRead h = do
                 let bytes = B8.append (B8.replicate 4 '\0') rawSize
                     size  = decode (B.fromStrict bytes) :: Int
                 result <- reader h B8.empty size
-                return . Just $ result
+                return $ Just result
     where
         reader :: Handle -> ByteString -> Int -> IO ByteString
         reader h base n

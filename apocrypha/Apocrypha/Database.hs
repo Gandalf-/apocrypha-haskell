@@ -22,48 +22,63 @@ data Action = Action
         { value   :: !Value
         , changed :: !Bool
         , result  :: ![String]
+        , top     :: !Object
+        , context :: Bool
         }
     deriving (Show, Eq)
 
 type Operations = [String]
-type Top = Object
 
 
-action :: Action -> Operations -> Top -> Action
+action :: Action -> Operations -> Action
 
 -- aliases
-action a ("-k" : v) t = action a ("--keys" : v) t
-action a ("-s" : v) t = action a ("--set"  : v) t
-action a ("-d" : v) t = action a ("--del"  : v) t
-action a ("-e" : v) t = action a ("--edit" : v) t
-action a ("-p" : v) t = action a ("--pop"  : v) t
+action a ("-k" : v) = action a ("--keys" : v)
+action a ("-s" : v) = action a ("--set"  : v)
+action a ("-d" : v) = action a ("--del"  : v)
+action a ("-e" : v) = action a ("--edit" : v)
+action a ("-p" : v) = action a ("--pop"  : v)
+action a ("-c" : v) = action a ("--context" : v)
+
+
+-- context
+action (Action v c r t _) ("--context" : xs) =
+        action (Action v c r t True) xs
 
 
 -- get
-action (Action value _ _) [] _ =
-        Action value False $ pretty value
+action (Action value _ _ t context) [] =
+        Action value False result t context
+    where
+        result :: [String]
+        result =
+            if context
+                then map ("= " ++) $ pretty value
+                else pretty value
 
 
 -- keys - object
-action (Action db@(Object o) _ _) ("--keys" : _) _ =
-        Action db False keys
+action (Action db@(Object o) _ _ t c) ("--keys" : _) =
+        Action db False keys t c
     where keys = sort . map T.unpack $ HM.keys o
 
 -- keys - bottom
-action (Action a _ _) ("--keys" : _) _ =
+action (Action a _ _ _ _) ("--keys" : _) =
         dbError a "cannot retrieve keys for non-dict"
 
 
 -- assign
-action (Action db _ r) ("=" : values) _ =
+action (Action db _ r t c) ("=" : values) =
         if empty new || db == new
-            then Action db  False r
-            else Action new True  r
-    where new = toValue values
+            then Action db  False r t c
+            else Action new True  r t c
+    where
+        new :: Value
+        new = toValue values
 
 
 -- set
-action (Action v _ output) ("--set" : values) _ =
+action (Action v _ output t c) ("--set" : values) =
         update parsed
     where
         parsed :: Maybe Value
@@ -72,155 +87,165 @@ action (Action v _ output) ("--set" : values) _ =
                 then Nothing
                 else decodeStrict . B8.pack . head $ values
 
+        update :: Maybe Value -> Action
         update Nothing  = dbError v "unable to parse JSON"
         update (Just a) =
             if v == a
-                then Action v False output
-                else Action a True  output
+                then Action v False output t c
+                else Action a True  output t c
 
 
 -- del
-action (Action _ _ output) ("--del" : _) _ =
-        Action Null True output
+action (Action _ _ output t c) ("--del" : _) =
+        Action Null True output t c
 
 
 -- append - array
-action (Action (Array a  ) _ output) ("+" : values) _ =
-        Action (Array new) True output
+action (Action (Array a  ) _ output t c) ("+" : values) =
+        Action (Array new) True output t c
     where
+        new :: V.Vector Value
         new   = a V.++ right
+
+        right :: V.Vector Value
         right = V.fromList . map (String . T.pack) $ values
 
 -- append - object
-action (Action db@(Object o) _ output) ("+" : values) t =
+action (Action db@(Object o) _ output t c) ("+" : values) =
     -- we allow appending to a dictionary only if it's empty,
     -- since that means it's new and hasn't been assigned a value
         if HM.null o
-            then action emptyAction ("+" : values) t
+            then action emptyAction ("+" : values)
             else dbError db "cannot append to a dictionary"
 
-    where emptyAction = Action emptyArray True output
-          emptyArray  = Array . V.fromList $ []
+    where
+        emptyAction = Action emptyArray True output t c
+        emptyArray  = Array . V.fromList $ []
 
 -- append - string
-action (Action value@(String _) _ output) ("+" : values) _ =
-        Action (Array new) True output
+action (Action value@(String _) _ output t c) ("+" : values) =
+        Action (Array new) True output t c
     where
         new   = left V.++ right
         left  = V.fromList [value]
         right = V.fromList . map (String . T.pack) $ values
 
 -- append - bottom
-action (Action a _ _) ("+" : _) _ =
+action (Action a _ _ _ _) ("+" : _) =
         dbError a "this type does not support addition"
 
 
 -- subtract - array
-action (Action (Array a) _ output) ("-" : values) _ =
+action (Action (Array a) _ output t c) ("-" : values) =
         if V.length new == 1
-            then Action (V.head new) True output
-            else Action (Array  new) True output
+            then Action (V.head new) True output t c
+            else Action (Array  new) True output t c
     where
         new :: V.Vector Value
-        new = V.filter (`notElem` right) a
-
+        new   = V.filter (`notElem` right) a
         right = V.fromList . map (String . T.pack) $ values
 
 -- subtract - string
-action (Action value@(String s) c output) ("-" : v) _ =
+action (Action value@(String s) changed output t c) ("-" : v) =
         if s `elem` values
-            then Action Null  True output
-            else Action value c    output
+            then Action Null  True    output t c
+            else Action value changed output t c
     where
         values :: [T.Text]
         values = map T.pack v
 
 -- subtract - bottom
-action (Action a _ _) ("-" : _) _ =
+action (Action a _ _ _ _) ("-" : _) =
         dbError a "this type does not support subtraction"
 
 
 -- pop - array
-action (Action (Array a) _ _) ("--pop" : _) _ =
-        Action (Array $ V.tail a) True value
-
+action (Action (Array a) _ _ t c) ("--pop" : _) =
+        Action (Array $ V.tail a) True value t c
     where
         value = pretty $ V.head a
 
 -- pop - string
-action (Action (String s) _ _) ("--pop" : _) _ =
-        Action Null True [T.unpack s]
+action (Action (String s) _ _ t c) ("--pop" : _) =
+        Action Null True [T.unpack s] t c
 
 -- pop - object
-action (Action db@(Object o) _ output) ("--pop" : _) _ =
+action (Action db@(Object o) _ output t c) ("--pop" : _) =
     -- we allow popping from a dictionary only if it's empty,
     -- since that means it's new and hasn't been assigned a value
         if HM.null o
-            then Action db False output
+            then Action db False output t c
             else dbError db "cannot pop from a dictionary"
 
 
 -- pop - bottom
-action (Action a _ _) ("--pop" : _) _ =
+action (Action a _ _ _ _) ("--pop" : _) =
         dbError a "this type does not support pop"
 
 
 -- edit
-action (Action value c _) ("--edit" : _) _ =
-        Action value c [dump value]
+action (Action value c _ t con) ("--edit" : _) =
+        Action value c [dump value] t con
 
 
 -- index
-action a@(Action (Object o) changed output) (k : xs) t =
+action a@(Action (Object o) changed output t context) (k : xs) =
         if deref
-            then dereference a (derefK : xs) t
-            else Action newBase newChanged result
+            then dereference a (derefK : xs)
+            else Action newBase newChanged result t context
     where
-        result = output ++ newOutput
+        (Action newValue newChanged newOutput _ _) =
+            action (Action childDB changed [] t context) xs
 
-        (Action newValue newChanged newOutput) =
-            action (Action childDB changed []) xs t
-
+        newBase :: Value
         newBase = Object
                 . HM.filter (not . empty)
                 . HM.insert key newValue $ o
 
+        childDB :: Value
         childDB  = HM.lookupDefault newEntry key o
-        newEntry = Object $ HM.fromList []
-        key      = T.pack k
 
+        newEntry :: Value
+        newEntry = Object $ HM.fromList []
+
+        result  = if context
+                      then output ++ map ((k ++ " ") ++) newOutput
+                      else output ++ newOutput
+        key     = T.pack k
         deref   = head k == '!'
         derefK  = tail k
 
 
-action (Action db _ _) _ _ =
+action (Action db _ _ _ _) _ =
         dbError db "cannot index through non-dict"
 
 
-dereference :: Action -> Operations -> Top -> Action
-dereference original (k : xs) top =
+dereference :: Action -> Operations -> Action
+dereference original@(Action _ _ _ top c)  (k : xs) =
         if key `elem` HM.keys top
             then case value of
                      -- the dereferenced value is just a string
-                     (String s) -> action newBase (T.unpack s : xs) top
+                     (String s) -> action newBase (T.unpack s : xs)
 
                      -- the dereferenced value is an array, we have to
                      -- apply the remaining arguments to each member
-                     (Array a)  -> foldr (apply top xs) newBase a
+                     (Array a)  -> foldr (apply xs) newBase a
                      _          -> original
 
             else original
     where
-        newBase = Action (Object top) False []
+        newBase :: Action
+        newBase = Action (Object top) False [] top c
+
         value = HM.lookupDefault Null key top
         key = T.pack k
 
-dereference a [] _ = a
+dereference a [] = a
 
 
-apply :: Top -> Operations -> Value -> Action -> Action
-apply t xs (String s) a = action a (T.unpack s : xs) t
-apply _ _ _ a           = a
+apply :: Operations -> Value -> Action -> Action
+apply xs (String s) a = action a (T.unpack s : xs)
+apply _ _ a           = a
 
 
 -- json utilities
@@ -272,7 +297,8 @@ pretty v = [show v]
 
 -- IO utilities
 dbError :: Value -> String -> Action
-dbError v msg = Action v False ["error: " ++ msg]
+dbError v msg =
+        Action v False ["error: " ++ msg] HM.empty False
 
 
 getDB :: IO Value

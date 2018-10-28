@@ -14,7 +14,6 @@ import           Apocrypha.Protocol
 import           Data.Aeson
 
 import qualified Data.ByteString.Char8    as B8
-import qualified Data.HashMap.Strict      as HM
 import qualified Data.Text                as T
 
 
@@ -114,12 +113,15 @@ runAction :: Value -> Operations -> (String, Bool, Value)
 runAction db query =
         (result, changed, newDB)
     where
-        (Action newDB changed output) =
-            case db of
-                (Object o) -> action baseAction query o
-                _          -> action baseAction query $ HM.fromList []
+        (Action newDB changed output _ _) = action baseAction query
 
-        baseAction = Action db False []
+        baseAction :: Action
+        baseAction =
+            case db of
+                (Object o) -> Action db False [] o False
+                _          -> error "database top level is not a map"
+
+        result :: String
         result = intercalate "\n" output ++ "\n"
 
 
