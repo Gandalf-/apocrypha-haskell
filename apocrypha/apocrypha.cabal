@@ -1,8 +1,8 @@
 name:                apocrypha
 version:             0.1.0.0
-synopsis:            Simple project template from stack
+synopsis:            A lightweight, flexible JSON server and client
 description:         Please see README.md
-homepage:            https://github.com/bitemyapp/hello#readme
+homepage:            https://www.anardil.net
 license:             BSD3
 license-file:        LICENSE
 author:              Austin Voecks
@@ -60,6 +60,7 @@ library
   build-depends:
     base >= 4.7 && < 5,
     aeson,
+    aeson-pretty,
     network,
     text,
     bytestring,

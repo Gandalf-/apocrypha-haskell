@@ -7,6 +7,7 @@ module Apocrypha.Database
     ) where
 
 import           Data.Aeson
+import           Data.Aeson.Encode.Pretty (encodePretty)
 
 import           Data.List             (intercalate, sort)
 import           Data.Maybe            (fromMaybe)
@@ -251,7 +252,7 @@ dereference a [] = a
 
 -- json utilities
 dump :: Value -> String
-dump = B8.unpack . B.toStrict . encode
+dump = B8.unpack . B.toStrict . encodePretty
 
 
 toValue :: [String] -> Value
@@ -269,28 +270,16 @@ empty _          = False
 
 pretty :: Context -> Value -> [String]
 pretty _ Null = []
-pretty c (Array v) = [intercalate "\n" . concatMap (pretty c) . V.toList $ v]
+pretty c (Array v) =
+        [intercalate "\n" . concatMap (pretty c) . V.toList $ v]
+
 pretty _ v@(Object o) =
         if HM.null o
             then []
             else result
     where
         result :: [String]
-        result = [tail . init $ go (dump v) 0]
-
-        go :: String -> Int -> String
-        go [] _        = "\n"
-        go ('{': cs) d = "\n" ++ replicate d ' ' ++ go cs (d + 2)
-        go ('[': cs) d = "\n" ++ replicate d ' ' ++ go cs (d + 2)
-
-        go (',': cs) d = "\n" ++ replicate (d - 2) ' ' ++ go cs d
-
-        go ('}': cs) d = go cs (d - 2)
-        go (']': cs) d = go cs (d - 2)
-
-        go ('"': cs) d = "'" ++ go cs d
-        go (':': cs) d = ": " ++ go cs d
-        go (c  : cs) d = c : go cs d
+        result = [dump v]
 
 pretty (Context True m) (String s) = addContext m $ T.unpack s
 pretty (Context _ _)    (String s) = [T.unpack s]
