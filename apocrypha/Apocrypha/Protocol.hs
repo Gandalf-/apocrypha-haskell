@@ -1,6 +1,6 @@
 module Apocrypha.Protocol
     ( client, jClient
-    , Context, getContext
+    , Context, getContext, defaultContext
     , protoSend, protoRead
     ) where
 
@@ -18,6 +18,10 @@ import qualified Data.ByteString.Lazy  as B
 
 
 type Context = Maybe Handle
+
+
+defaultContext :: IO Context
+defaultContext = getContext Nothing
 
 
 getContext :: Maybe (String, PortNumber) -> IO Context

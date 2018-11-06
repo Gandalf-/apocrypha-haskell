@@ -21,6 +21,18 @@ data Task = Task
 type StartTime = Integer
 
 
+main :: IO ()
+main = do
+        putStrLn "devbot starting up"
+        hSetBuffering stdout LineBuffering
+
+        loop
+    where
+        loop = do
+          _ <- events >>= runner 1 . startingState
+          loop
+
+
 startingState :: [Event] -> State
 startingState = map (\ event -> Task event Nothing 0)
 
@@ -191,15 +203,3 @@ requirementsMet n (Config _ _ (Just r)) = do
 
 getTime :: IO Integer
 getTime = round <$> getPOSIXTime
-
-
-main :: IO ()
-main = do
-        putStrLn "devbot starting up"
-        hSetBuffering stdout LineBuffering
-
-        loop
-    where
-        loop = do
-          _ <- events >>= runner 1 . startingState
-          loop

@@ -88,7 +88,7 @@ instance ToJSON Config where
 
 events :: IO [Event]
 events = do
-    c <- getContext Nothing
+    c <- defaultContext
     cs <- get c ["devbot", "events"] :: IO (Maybe ConfigMap)
     ds <- get c ["devbot", "data"  ] :: IO (Maybe DataMap)
 

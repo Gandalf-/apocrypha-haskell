@@ -3,7 +3,7 @@
 module Apocrypha.Client
     ( keys,  get,  set,  del , pop , append
     , keys', get', set', del', pop', append'
-    , Context, getContext
+    , Context, getContext, defaultContext
     ) where
 
 import           Apocrypha.Protocol
@@ -29,7 +29,7 @@ del con items = do
     return ()
 
 del' items = do
-    c <- getContext Nothing
+    c <- defaultContext
     del c items
 
 
@@ -40,7 +40,7 @@ set context items value = do
     where v = B8.unpack . B.toStrict . encode $ value
 
 set' items value = do
-    c <- getContext Nothing
+    c <- defaultContext
     set c items value
 
 
@@ -52,7 +52,7 @@ get context items = do
         Nothing -> return Nothing
 
 get' items = do
-    c <- getContext Nothing
+    c <- defaultContext
     get c items
 
 
@@ -62,7 +62,7 @@ append context items value = do
     return ()
 
 append' items value = do
-    c <- getContext Nothing
+    c <- defaultContext
     append c items value
 
 
@@ -71,5 +71,5 @@ pop context items =
     client context $ items ++ ["--pop"]
 
 pop' items = do
-    c <- getContext Nothing
+    c <- defaultContext
     pop c items
