@@ -12,14 +12,22 @@ category:            Network
 build-type:          Simple
 cabal-version:       >=1.10
 
+flag release
+  description:         for installation
+  default: False
+  manual: True
+
 executable d
   hs-source-dirs:      src
   main-is:             d.hs
   default-language:    Haskell2010
 
-  ghc-options:
-    -Wall -Wno-type-defaults -Wno-missing-signatures -Wno-name-shadowing
-    -O
+  ghc-options: -Wall
+
+  if flag(release)
+    ghc-options: -O2
+  else
+    ghc-options: -dynamic -O0
 
   build-depends:
     base >= 4.7 && < 5,
@@ -30,9 +38,12 @@ executable apocrypha-server
   main-is:             server.hs
   default-language:    Haskell2010
 
-  ghc-options:
-    -Wall -Wno-type-defaults -Wno-missing-signatures -Wno-name-shadowing
-    -O -threaded
+  ghc-options: -Wall -threaded
+
+  if flag(release)
+    ghc-options: -O2
+  else
+    ghc-options: -dynamic -O0
 
   build-depends:
     base >= 4.7 && < 5,
@@ -48,8 +59,12 @@ executable apocrypha-server
 library
   hs-source-dirs:      .
 
-  ghc-options:
-    -Wall -Wno-type-defaults -Wno-missing-signatures -Wno-name-shadowing
+  ghc-options: -Wall
+
+  if flag(release)
+    ghc-options: -O2
+  else
+    ghc-options: -dynamic -O0
 
   exposed-modules:
     Apocrypha.Client
@@ -68,3 +83,7 @@ library
     unordered-containers,
     directory,
     binary
+
+source-repository head
+  type:     git
+  location: git://github.com/Gandalf-/Haskell

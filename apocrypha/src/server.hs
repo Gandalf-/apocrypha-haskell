@@ -5,16 +5,15 @@ import           Control.Concurrent.Async (async)
 import           Control.Monad.Except
 import           Control.Monad.Reader
 import           Data.ByteString.Char8    (ByteString)
-import           Data.List                (intercalate)
-import           Network
-import           System.IO
-
-import           Apocrypha.Database
-import           Apocrypha.Protocol
-import           Data.Aeson
-
 import qualified Data.ByteString.Char8    as B8
 import qualified Data.Text                as T
+import           Network
+import           System.Exit              (die)
+import           System.IO
+
+import           Apocrypha.Database       (Query, getDB, runAction, saveDB)
+import           Apocrypha.Protocol       (protoRead, protoSend)
+import           Data.Aeson
 
 
 type WriteReq = MVar Bool
@@ -22,9 +21,9 @@ type Database = MVar Value
 type ServerApp = ReaderT ThreadData IO
 
 data ThreadData = ThreadData
-        { threadHandle :: Handle
-        , userTableMV  :: Database
-        , writeRequest :: WriteReq
+        { threadHandle :: !Handle
+        , userTableMV  :: !Database
+        , writeRequest :: !WriteReq
         }
 
 
@@ -34,10 +33,10 @@ main :: IO ()
 main = do
         server <- listenOn $ PortNumber 9999
         putStrLn "Server started"
-        db <- getDB
 
+        db <- getDB :: IO Value
         case db of
-            Null -> putStrLn "Could not parse database on disk"
+            Null -> die "Could not parse database on disk"
             _    -> do
                 dbMV <- newMVar db
                 wrMV <- newMVar False
@@ -47,11 +46,10 @@ main = do
 
 clientForker :: Socket -> Database -> WriteReq -> IO b
 -- ^ listen for clients, fork off workers
-clientForker socket db wr = do
+clientForker socket db wr = forever $ do
         (h, _, _) <- accept socket
         hSetBuffering h NoBuffering
         void . async $ runReaderT clientLoop (ThreadData h db wr)
-        clientForker socket db wr
 
 
 diskWriter :: ServerApp ()
@@ -70,11 +68,10 @@ clientLoop :: ServerApp ()
 -- ^ read queries from the client, serve them or quit
 clientLoop =
         flip catchError (\_ -> return ()) $ do
-          query <- getQuery
-          case query of
-            Nothing  -> return ()
-            (Just q) -> do serve q
-                           clientLoop
+              query <- getQuery
+              case query of
+                    Nothing  -> return ()
+                    (Just q) -> serve q >> clientLoop
 
 
 getQuery :: ServerApp (Maybe ByteString)
@@ -85,59 +82,61 @@ getQuery = viewHandle >>= liftIO . protoRead
 serve :: ByteString -> ServerApp ()
 -- ^ Run a user query through the database, and send them the result.
 -- If the database reports that it changed, we set writeRequest.
-serve t = do
+serve rawQuery = do
+
+        -- start - shared state critical section
         dbMV <- viewDatabase
         db <- takeMVarT dbMV
         let (result, changed, newDB) = runAction db query
         putMVarT dbMV newDB
+        -- end   - shared state critical section
 
         queryLogger changed query
         viewHandle >>= \h -> liftIO . protoSend h . B8.pack $ result
 
         wrMV <- viewWrite
         wr <- takeMVarT wrMV
-
         if changed
             then putMVarT wrMV True
             else putMVarT wrMV wr
     where
+        query :: Query
         query = filter (not . null)
               . map T.unpack
-              . T.split (== '\n') $ text
-
-        text = T.pack . B8.unpack $ t
-
-
-runAction :: Value -> Operations -> (String, Bool, Value)
--- ^ run the query through the database and produce the artifacts
-runAction db query =
-        (result, changed, newDB)
-    where
-        (Action newDB changed output _ _) = action baseAction query
-
-        baseAction :: Action
-        baseAction =
-            case db of
-                (Object o) -> Action db False [] o (Context False [])
-                _          -> error "database top level is not a map"
-
-        result :: String
-        result = intercalate "\n" output ++ "\n"
+              . T.split (== '\n')
+              . T.pack
+              . B8.unpack $ rawQuery
 
 
-queryLogger :: Bool -> [String] -> ServerApp ()
+queryLogger :: Bool -> Query -> ServerApp ()
 -- ^ write a summary of the query to stdout
 queryLogger c query =
         echoLocal . take 80 $ changed ++ unwords query
     where changed = (if c then '~' else ' ') : " "
 
 
+-- | MVar Utilities
+
+putMVarT :: MVar a -> a -> ReaderT ThreadData IO ()
 putMVarT  = (liftIO . ) . putMVar
+
+readMVarT :: MVar a -> ReaderT ThreadData IO a
 readMVarT = liftIO . readMVar
+
+takeMVarT :: MVar a -> ReaderT ThreadData IO a
 takeMVarT = liftIO . takeMVar
 
+
+-- | ReaderT Utilities
+
+viewHandle :: ReaderT ThreadData IO Handle
 viewHandle   = asks threadHandle
+
+viewDatabase :: ReaderT ThreadData IO Database
 viewDatabase = asks userTableMV
+
+viewWrite :: ReaderT ThreadData IO WriteReq
 viewWrite    = asks writeRequest
 
+echoLocal :: String -> ReaderT ThreadData IO ()
 echoLocal = liftIO . putStrLn

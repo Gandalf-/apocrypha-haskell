@@ -1,44 +1,50 @@
 module Apocrypha.Database
     ( Action(..)
-    , Operations
+    , Query
     , Context(..)
     , action
     , getDB, saveDB
+    , runAction
     ) where
 
 import           Data.Aeson
 import           Data.Aeson.Encode.Pretty (encodePretty)
 
-import           Data.List             (intercalate, sort)
-import           Data.Maybe            (fromMaybe)
-import           System.Directory      (getHomeDirectory)
+import           Data.List                (intercalate, sort)
+import           Data.Maybe               (fromMaybe)
+import           System.Directory         (getHomeDirectory)
 
-import qualified Data.ByteString.Char8 as B8
-import qualified Data.ByteString.Lazy  as B
-import qualified Data.HashMap.Strict   as HM
-import qualified Data.Text             as T
-import qualified Data.Vector           as V
+import qualified Data.ByteString.Char8    as B8
+import qualified Data.ByteString.Lazy     as B
+import qualified Data.HashMap.Strict      as HM
+import qualified Data.Text                as T
+import qualified Data.Vector              as V
 
 
 data Action = Action
-        { value   :: !Value
-        , changed :: !Bool
-        , result  :: ![String]
-        , top     :: !Object
-        , context :: !Context
+        { _value   :: !Value
+        , _changed :: !Bool
+        , _result  :: ![String]
+        , _top     :: !Object
+        , _context :: !Context
         }
     deriving (Show, Eq)
 
-type Operations = [String]
+type Query = [String]
 
 data Context = Context
-        { enabled :: !Bool
-        , members :: ![String]
+        { _enabled :: !Bool
+        , _members :: ![String]
         }
     deriving (Show, Eq)
 
 
-action :: Action -> Operations -> Action
+-- | Action - core logic of the database
+--
+-- queries traverse down levels of the database until they hit an action,
+-- the output and level is then mutated and passsed back up to the top
+
+action :: Action -> Query -> Action
 
 -- aliases
 action a ("-k" : v) = action a ("--keys" : v)
@@ -190,17 +196,17 @@ action (Action a _ _ _ _) ("--pop" : _) =
 
 -- edit
 action (Action value c _ t con) ("--edit" : _) =
-        Action value c [dump value] t con
+        Action value c [showValue value] t con
 
 
 -- index
-action a@(Action (Object o) changed output t context) (k : xs) =
+action a@(Action (Object o) changed previousOutput top context) (k : xs) =
         if deref
             then dereference a (derefK : xs)
-            else Action newBase newChanged result t context
+            else Action newBase newChanged output top context
     where
         (Action newValue newChanged newOutput _ _) =
-            action (Action nextDB changed [] t nextContext) xs
+            action (Action nextDB changed [] top nextContext) xs
 
         newBase :: Value
         newBase = Object
@@ -211,19 +217,22 @@ action a@(Action (Object o) changed output t context) (k : xs) =
         nextDB  = HM.lookupDefault (Object $ HM.fromList []) key o
 
         nextContext :: Context
-        nextContext = Context (enabled context) (members context ++ [k])
+        nextContext = Context (_enabled context) (_members context ++ [k])
 
-        result  = output ++ newOutput
+        output  = previousOutput ++ newOutput
         key     = T.pack k
         deref   = head k == '!'
         derefK  = tail k
 
 
+-- absolute bottom
 action (Action db _ _ _ _) _ =
         dbError db "cannot index through non-dict"
 
 
-dereference :: Action -> Operations -> Action
+-- | Misc Utilities
+
+dereference :: Action -> Query -> Action
 dereference original@(Action _ _ _ top c)  (k : xs) =
         if key `elem` HM.keys top
             then case value of
@@ -243,30 +252,28 @@ dereference original@(Action _ _ _ top c)  (k : xs) =
         value = HM.lookupDefault Null key top
         key = T.pack k
 
-        apply :: Operations -> Value -> Action -> Action
-        apply xs (String s) a = action a (T.unpack s : xs)
+        apply :: Query -> Value -> Action -> Action
+        apply os (String s) a = action a (T.unpack s : os)
         apply _ _ a           = a
 
 dereference a [] = a
-
-
--- json utilities
-dump :: Value -> String
-dump = B8.unpack . B.toStrict . encodePretty
-
 
 toValue :: [String] -> Value
 toValue [x] = String . T.pack $ x
 toValue xs  = Array . V.fromList . map (String . T.pack) $ xs
 
-
 empty :: Value -> Bool
+-- ^ determine if a polymorphic value is empty
 empty (Object o) = HM.null o
 empty (Array  a) = V.null a
 empty (String s) = T.null s
 empty Null       = True
 empty _          = False
 
+
+-- | Presentation
+showValue :: Value -> String
+showValue = B8.unpack . B.toStrict . encodePretty
 
 pretty :: Context -> Value -> [String]
 pretty _ Null = []
@@ -276,10 +283,7 @@ pretty c (Array v) =
 pretty _ v@(Object o) =
         if HM.null o
             then []
-            else result
-    where
-        result :: [String]
-        result = [dump v]
+            else [showValue v]
 
 pretty (Context True m) (String s) = addContext m $ T.unpack s
 pretty (Context _ _)    (String s) = [T.unpack s]
@@ -287,33 +291,49 @@ pretty (Context _ _)    (String s) = [T.unpack s]
 pretty (Context True m) v = addContext m $ show v
 pretty (Context _ _)    v = [show v]
 
-
 addContext :: [String] -> String -> [String]
-addContext members value =
-        [intercalate " = " $ safeInit members ++ [value]]
+-- ^ create the context explanation for a value
+-- context is a list of keys that we had to traverse to get to the value
+addContext context value =
+        [intercalate " = " $ safeInit context ++ [value]]
+    where
+        safeInit [] = []
+        safeInit xs = init xs
 
 
-safeInit :: [a] -> [a]
-safeInit [] = []
-safeInit xs = init xs
+-- | IO utilities
+runAction :: Value -> Query -> (String, Bool, Value)
+-- ^ run the query through the database and produce the artifacts
+runAction db query =
+        (result, changed, newDB)
+    where
+        (Action newDB changed output _ _) = action baseAction query
+
+        baseAction :: Action
+        baseAction =
+            case db of
+                (Object o) -> Action db False [] o (Context False [])
+                _          -> error "database top level is not a map"
+
+        result :: String
+        result = intercalate "\n" output ++ "\n"
 
 
--- IO utilities
 dbError :: Value -> String -> Action
+-- ^ create an error out of this level to pass back up, do not modify the
+-- value, do not report changes
 dbError v msg =
         Action v False ["error: " ++ msg] HM.empty (Context False [])
-
 
 getDB :: IO Value
 getDB = do
         file <- defaultDB
         fromMaybe Null . decodeStrict . B8.pack <$> readFile file
 
-
 saveDB :: Value -> IO ()
-saveDB value = do
+saveDB v = do
         file <- defaultDB
-        B.writeFile file $ encode value
+        B.writeFile file $ encode v
 
-
+defaultDB :: IO String
 defaultDB = (++ "/.db.json") <$> getHomeDirectory
