@@ -5,8 +5,9 @@ import           Control.Concurrent.Async (async)
 import           Control.Monad.Except
 import           Control.Monad.Reader
 import           Data.ByteString.Char8    (ByteString)
-import qualified Data.ByteString.Char8    as B8
+import           Data.Text                (Text)
 import qualified Data.Text                as T
+import           Data.Text.Encoding       (decodeUtf8, encodeUtf8)
 import           Network
 import           System.Exit              (die)
 import           System.IO
@@ -40,8 +41,11 @@ main = do
             _    -> do
                 dbMV <- newMVar db
                 wrMV <- newMVar False
-                void . async $ runReaderT diskWriter (ThreadData stdout dbMV wrMV)
-                withSocketsDo $ clientForker server dbMV wrMV
+                void . async $
+                    runReaderT diskWriter (ThreadData stdout dbMV wrMV)
+
+                withSocketsDo $
+                    clientForker server dbMV wrMV
 
 
 clientForker :: Socket -> Database -> WriteReq -> IO b
@@ -92,7 +96,7 @@ serve rawQuery = do
         -- end   - shared state critical section
 
         queryLogger changed query
-        viewHandle >>= \h -> liftIO . protoSend h . B8.pack $ result
+        viewHandle >>= \h -> liftIO . protoSend h . encodeUtf8 $ result
 
         wrMV <- viewWrite
         wr <- takeMVarT wrMV
@@ -101,18 +105,18 @@ serve rawQuery = do
             else putMVarT wrMV wr
     where
         query :: Query
-        query = filter (not . null)
-              . map T.unpack
+        query = filter (not . T.null)
               . T.split (== '\n')
-              . T.pack
-              . B8.unpack $ rawQuery
+              $ decodeUtf8 rawQuery
 
 
 queryLogger :: Bool -> Query -> ServerApp ()
 -- ^ write a summary of the query to stdout
 queryLogger c query =
-        echoLocal . take 80 $ changed ++ unwords query
-    where changed = (if c then '~' else ' ') : " "
+        echoLocal . T.take 80 $ changed `T.append` T.unwords query
+    where
+        changed :: Text
+        changed = if c then "~ " else "  "
 
 
 -- | MVar Utilities
@@ -138,5 +142,5 @@ viewDatabase = asks userTableMV
 viewWrite :: ReaderT ThreadData IO WriteReq
 viewWrite    = asks writeRequest
 
-echoLocal :: String -> ReaderT ThreadData IO ()
-echoLocal = liftIO . putStrLn
+echoLocal :: Text -> ReaderT ThreadData IO ()
+echoLocal = liftIO . putStrLn . T.unpack
