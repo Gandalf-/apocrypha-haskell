@@ -12,19 +12,22 @@ import           Network
 import           System.Exit              (die)
 import           System.IO
 
+import           Apocrypha.Cache          (Cache, emptyCache, get, put)
 import           Apocrypha.Database       (Query, getDB, runAction, saveDB)
 import           Apocrypha.Protocol       (protoRead, protoSend)
 import           Data.Aeson
 
 
-type WriteReq = MVar Bool
+type WriteNeeded = MVar Bool
 type Database = MVar Value
+type DbCache  = MVar Cache
 type ServerApp = ReaderT ThreadData IO
 
 data ThreadData = ThreadData
         { threadHandle :: !Handle
-        , userTableMV  :: !Database
-        , writeRequest :: !WriteReq
+        , database     :: !Database
+        , writeNeeded  :: !WriteNeeded
+        , cache        :: !DbCache
         }
 
 
@@ -41,27 +44,28 @@ main = do
             _    -> do
                 dbMV <- newMVar db
                 wrMV <- newMVar False
+                chMV <- newMVar emptyCache
                 void . async $
-                    runReaderT diskWriter (ThreadData stdout dbMV wrMV)
+                    runReaderT diskWriter (ThreadData stdout dbMV wrMV chMV)
 
                 withSocketsDo $
-                    clientForker server dbMV wrMV
+                    clientForker server dbMV wrMV chMV
 
 
-clientForker :: Socket -> Database -> WriteReq -> IO b
+clientForker :: Socket -> Database -> WriteNeeded -> DbCache -> IO b
 -- ^ listen for clients, fork off workers
-clientForker socket db wr = forever $ do
+clientForker socket db wr ch = forever $ do
         (h, _, _) <- accept socket
         hSetBuffering h NoBuffering
-        void . async $ runReaderT clientLoop (ThreadData h db wr)
+        void . async $ runReaderT clientLoop (ThreadData h db wr ch)
 
 
 diskWriter :: ServerApp ()
 -- ^ checks if a write to disk is necessary once per second
 -- done in a separate thread so client threads can run faster
 diskWriter = forever $ do
-        write <- viewWrite >>= readMVarT
-        db <- viewDatabase >>= readMVarT
+        write <- readMVarT =<< viewWrite
+        db <- readMVarT =<< viewDatabase
 
         liftIO $ threadDelay oneSecond
         when write $ liftIO $ saveDB db
@@ -85,24 +89,42 @@ getQuery = viewHandle >>= liftIO . protoRead
 
 serve :: ByteString -> ServerApp ()
 -- ^ Run a user query through the database, and send them the result.
--- If the database reports that it changed, we set writeRequest.
+-- If the database reports that it changed, we set writeNeeded.
 serve rawQuery = do
 
-        -- start - shared state critical section
-        dbMV <- viewDatabase
-        db <- takeMVarT dbMV
-        let (result, changed, newDB) = runAction db query
-        putMVarT dbMV newDB
-        -- end   - shared state critical section
+        ch <- takeMVarT =<< viewCache
+        case get ch query of
 
-        queryLogger changed query
-        viewHandle >>= \h -> liftIO . protoSend h . encodeUtf8 $ result
+            -- cache hit
+            Just value -> do
+                viewCache >>= putMVarT ch
 
-        wrMV <- viewWrite
-        wr <- takeMVarT wrMV
-        if changed
-            then putMVarT wrMV True
-            else putMVarT wrMV wr
+                queryLogger True False query
+                viewHandle >>= \h -> liftIO . protoSend h . encodeUtf8 $ value
+
+            -- cache miss
+            Nothing -> do
+
+                db <- takeMVarT =<< viewDatabase
+
+                let (result, changed, newDB) = runAction db query
+                    newCache = put ch query result
+
+                viewDatabase >>= putMVarT newDB
+                viewCache    >>= putMVarT newCache
+
+                viewHandle >>= \h -> liftIO . protoSend h . encodeUtf8 $ result
+                queryLogger False changed query
+
+                when changed $ do
+                    -- set writeNeeded
+                    _ <- takeMVarT =<< viewWrite
+                    viewWrite >>= putMVarT True
+
+                    -- clear the cache
+                    _ <- takeMVarT =<< viewCache
+                    viewCache >>= putMVarT emptyCache
+
     where
         query :: Query
         query = filter (not . T.null)
@@ -110,19 +132,27 @@ serve rawQuery = do
               $ decodeUtf8 rawQuery
 
 
-queryLogger :: Bool -> Query -> ServerApp ()
+queryLogger :: Bool -> Bool -> Query -> ServerApp ()
 -- ^ write a summary of the query to stdout
-queryLogger c query =
-        echoLocal . T.take 80 $ changed `T.append` T.unwords query
+queryLogger hit write query =
+        echoLocal . T.take 80 $ status `T.append` T.unwords query
     where
-        changed :: Text
-        changed = if c then "~ " else "  "
+        status
+            | hit && write = "? "       -- this shouldn't happen
+            | hit          = "  "
+            | write        = "~ "
+            | otherwise    = "* "       -- no hit, no write
 
 
 -- | MVar Utilities
 
+putMVarT :: a -> MVar a -> ReaderT ThreadData IO ()
+putMVarT thing place = liftIO $ putMVar place thing
+
+{-
 putMVarT :: MVar a -> a -> ReaderT ThreadData IO ()
 putMVarT  = (liftIO . ) . putMVar
+-}
 
 readMVarT :: MVar a -> ReaderT ThreadData IO a
 readMVarT = liftIO . readMVar
@@ -134,13 +164,16 @@ takeMVarT = liftIO . takeMVar
 -- | ReaderT Utilities
 
 viewHandle :: ReaderT ThreadData IO Handle
-viewHandle   = asks threadHandle
+viewHandle = asks threadHandle
 
 viewDatabase :: ReaderT ThreadData IO Database
-viewDatabase = asks userTableMV
+viewDatabase = asks database
 
-viewWrite :: ReaderT ThreadData IO WriteReq
-viewWrite    = asks writeRequest
+viewWrite :: ReaderT ThreadData IO WriteNeeded
+viewWrite = asks writeNeeded
+
+viewCache :: ReaderT ThreadData IO DbCache
+viewCache = asks cache
 
 echoLocal :: Text -> ReaderT ThreadData IO ()
 echoLocal = liftIO . putStrLn . T.unpack

@@ -81,11 +81,13 @@ action (Action a _ _ _ _) ("--keys" : _) =
 
 
 -- assign
-action (Action db _ r t c) ("=" : values) =
-        if empty new || db == new
-            then Action db  False r t c
-            else Action new True  r t c
+action (Action db _ r t c) ("=" : values)
+        | empty new || db == new = noChange
+        | otherwise              = Action new True r t c
     where
+        noChange :: Action
+        noChange = Action db False r t c
+
         new :: Value
         new = toValue values
 
@@ -95,20 +97,18 @@ action (Action v _ output t c) ("--set" : values) =
         update parsed
     where
         parsed :: Maybe Value
-        parsed =
-            if null values
-                then Nothing
-                else decodeValue values
+        parsed
+            | null values = Nothing
+            | otherwise   = decodeValue values
 
         decodeValue :: [Text] -> Maybe Value
         decodeValue = decodeStrict . B8.pack . T.unpack . head
 
         update :: Maybe Value -> Action
         update Nothing  = dbError v "unable to parse JSON"
-        update (Just a) =
-            if v == a
-                then Action v False output t c
-                else Action a True  output t c
+        update (Just a)
+            | v == a    = Action v False output t c
+            | otherwise = Action a True output t c
 
 
 -- del
@@ -127,13 +127,11 @@ action (Action (Array a  ) _ output t c) ("+" : values) =
         right = V.fromList $ map String values
 
 -- append - object
-action (Action db@(Object o) _ output t c) ("+" : values) =
+action (Action db@(Object _) _ output t c) ("+" : values)
         -- we allow appending to a dictionary only if it's empty,
         -- since that means it's new and hasn't been assigned a value
-        if HM.null o
-            then action emptyAction ("+" : values)
-            else dbError db "cannot append to a dictionary"
-
+        | empty db  = action  emptyAction ("+" : values)
+        | otherwise = dbError db "cannot append to a dictionary"
     where
         emptyAction = Action emptyArray True output t c
         emptyArray  = Array . V.fromList $ []
@@ -152,20 +150,18 @@ action (Action a _ _ _ _) ("+" : _) =
 
 
 -- subtract - array
-action (Action (Array a) _ output t c) ("-" : values) =
-        if V.length new == 1
-            then Action (V.head new) True output t c
-            else Action (Array  new) True output t c
+action (Action (Array a) _ output t c) ("-" : values)
+        | V.length new == 1 = Action (V.head new) True output t c
+        | otherwise         = Action (Array  new) True output t c
     where
         new :: V.Vector Value
         new   = V.filter (`notElem` right) a
         right = V.fromList $ map String values
 
 -- subtract - string
-action (Action value@(String s) changed output t c) ("-" : values) =
-        if s `elem` values
-            then Action Null  True    output t c
-            else Action value changed output t c
+action (Action value@(String s) changed output t c) ("-" : values)
+        | s `elem` values = Action Null  True    output t c
+        | otherwise       = Action value changed output t c
 
 -- subtract - bottom
 action (Action a _ _ _ _) ("-" : _) =
@@ -183,12 +179,11 @@ action (Action (String s) _ _ t c) ("--pop" : _) =
         Action Null True [s] t c
 
 -- pop - object
-action (Action db@(Object o) _ output t c) ("--pop" : _) =
+action (Action db@(Object _) _ output t c) ("--pop" : _)
         -- we allow popping from a dictionary only if it's empty,
         -- since that means it's new and hasn't been assigned a value
-        if HM.null o
-            then Action db False output t c
-            else dbError db "cannot pop from a dictionary"
+        | empty db  = Action  db False output t c
+        | otherwise = dbError db "cannot pop from a dictionary"
 
 
 -- pop - bottom
@@ -202,10 +197,9 @@ action (Action value c _ t con) ("--edit" : _) =
 
 
 -- index
-action a@(Action (Object o) changed prevOutput top context) (key : xs) =
-        if deref
-            then dereference a (derefK : xs)
-            else Action newBase newChanged output top context
+action a@(Action (Object o) changed prevOutput top context) (key : xs)
+        | deref     = dereference a (derefK : xs)
+        | otherwise = Action newBase newChanged output top context
     where
         (Action newValue newChanged newOutput _ _) =
             action (Action nextDB changed [] top nextContext) xs
@@ -284,10 +278,9 @@ pretty _ Null = []
 pretty c (Array v) =
         [T.intercalate "\n" . concatMap (pretty c) . V.toList $ v]
 
-pretty _ v@(Object o) =
-        if HM.null o
-            then []
-            else [showValue v]
+pretty _ v@(Object o)
+        | HM.null o = []
+        | otherwise = [showValue v]
 
 pretty (Context True m) (String s) = addContext m s
 pretty (Context _ _)    (String s) = [s]

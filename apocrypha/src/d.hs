@@ -1,18 +1,17 @@
 module Main where
 
-import           Apocrypha.Protocol (client, getContext)
+import           Apocrypha.Protocol (client, defaultContext)
 import           System.Environment (getArgs)
-
-
-display :: Maybe String -> IO ()
-display Nothing  = return ()
-display (Just s) =
-        if null s || s == "\n"
-            then return ()
-            else putStr s
 
 
 main :: IO ()
 main = do
-        c <- getContext Nothing
+        c <- defaultContext
         getArgs >>= client c >>= display
+
+
+display :: Maybe String -> IO ()
+display Nothing  = return ()
+display (Just s)
+        | null s || s == "\n" = return ()
+        | otherwise           = putStr s
