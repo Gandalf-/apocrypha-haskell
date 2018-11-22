@@ -1,24 +1,53 @@
 module Main where
 
-import System.Environment (getArgs)
-import Apocrypha.Client
-import Control.Concurrent.Async
-import Control.Concurrent
-import Control.Monad
+import           Apocrypha.Client
+import           Control.Concurrent
+import           Control.Concurrent.Async
+import           Control.Monad
+import           Data.Time.Clock.POSIX    (getPOSIXTime)
+import           System.Environment       (getArgs)
+import           System.Exit
 
 main = do
-        c <- getContext Nothing
-        mapM_ (\_ -> keys c []) [1..10000]
+        args <- getArgs
+        case args of
+            [] -> die "usage: [test name]"
+            xs -> run $ head xs
 
 
-readWrite = do
-        async produce
-        consume
+bench f = do
+        start <- getPOSIXTime
+        f
+        end <- getPOSIXTime
+        print (end - start)
 
-        where produce = withC (\c -> pop c    ["messages", "benchmark"])
-              consume = withC (\c -> append c ["messages", "benchmark"] "value")
+
+run :: String -> IO ()
+run "single-reader" = bench singleReader
+run "multi-reader"  = bench multiReader
+run "single-writer" = bench singleWriter
 
 
-withC f = do
-        c <- getContext Nothing
-        forever f c
+singleCount = 100000
+
+
+singleReader :: IO ()
+singleReader = do
+        c <- defaultContext
+        mapM_ (\v -> keys c [show v]) [1..count]
+    where
+        count = singleCount
+
+multiReader :: IO ()
+multiReader = do
+        mapM_ (\ _ -> async singleReader) [1..count - 1]
+        singleReader
+    where
+        count = 10
+
+singleWriter :: IO ()
+singleWriter = do
+        c <- defaultContext
+        mapM_ (set c ["benchmark"] . show) [1..count]
+    where
+        count = singleCount

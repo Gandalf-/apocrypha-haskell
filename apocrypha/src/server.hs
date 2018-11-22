@@ -24,10 +24,10 @@ type DbCache  = MVar Cache
 type ServerApp = ReaderT ThreadData IO
 
 data ThreadData = ThreadData
-        { threadHandle :: !Handle
-        , database     :: !Database
-        , writeNeeded  :: !WriteNeeded
-        , cache        :: !DbCache
+        { _threadHandle :: !Handle
+        , _database     :: !Database
+        , _writeNeeded  :: !WriteNeeded
+        , _cache        :: !DbCache
         }
 
 
@@ -54,10 +54,10 @@ main = do
 
 clientForker :: Socket -> Database -> WriteNeeded -> DbCache -> IO b
 -- ^ listen for clients, fork off workers
-clientForker socket db wr ch = forever $ do
+clientForker socket d w c = forever $ do
         (h, _, _) <- accept socket
         hSetBuffering h NoBuffering
-        void . async $ runReaderT clientLoop (ThreadData h db wr ch)
+        void . async $ runReaderT clientLoop (ThreadData h d w c)
 
 
 diskWriter :: ServerApp ()
@@ -69,7 +69,8 @@ diskWriter = forever $ do
 
         liftIO $ threadDelay oneSecond
         when write $ liftIO $ saveDB db
-    where oneSecond = 1000000
+    where
+        oneSecond = 1000000
 
 
 clientLoop :: ServerApp ()
@@ -92,49 +93,62 @@ serve :: ByteString -> ServerApp ()
 -- If the database reports that it changed, we set writeNeeded.
 serve rawQuery = do
 
-        ch <- takeMVarT =<< viewCache
-        case get ch query of
+        cache <- takeMVarT =<< viewCache
+        case get cache query of
 
             -- cache hit
             Just value -> do
-                viewCache >>= putMVarT ch
+                putMVarT cache =<< viewCache
 
-                queryLogger True False query
-                viewHandle >>= \h -> liftIO . protoSend h . encodeUtf8 $ value
+                replyToClient value =<< viewHandle
+                logToConsole cacheHit noChange query
 
             -- cache miss
             Nothing -> do
-
                 db <- takeMVarT =<< viewDatabase
 
                 let (result, changed, newDB) = runAction db query
-                    newCache = put ch query result
+                    newCache = put cache query result
 
-                viewDatabase >>= putMVarT newDB
-                viewCache    >>= putMVarT newCache
+                putMVarT newDB    =<< viewDatabase
+                putMVarT newCache =<< viewCache
 
-                viewHandle >>= \h -> liftIO . protoSend h . encodeUtf8 $ result
-                queryLogger False changed query
+                replyToClient result =<< viewHandle
+                logToConsole cacheMiss changed query
 
                 when changed $ do
-                    -- set writeNeeded
-                    _ <- takeMVarT =<< viewWrite
-                    viewWrite >>= putMVarT True
-
-                    -- clear the cache
-                    _ <- takeMVarT =<< viewCache
-                    viewCache >>= putMVarT emptyCache
-
+                    setWriteNeeded
+                    clearCache
     where
         query :: Query
         query = filter (not . T.null)
               . T.split (== '\n')
               $ decodeUtf8 rawQuery
 
+        cacheHit = True
+        cacheMiss = False
+        noChange = False
 
-queryLogger :: Bool -> Bool -> Query -> ServerApp ()
+
+setWriteNeeded :: ServerApp ()
+setWriteNeeded = do
+    _ <- takeMVarT =<< viewWrite
+    putMVarT True =<< viewWrite
+
+
+clearCache :: ServerApp ()
+clearCache = do
+    _ <- takeMVarT =<< viewCache
+    putMVarT emptyCache =<< viewCache
+
+
+replyToClient :: Text -> Handle -> ServerApp ()
+replyToClient value h = liftIO . protoSend h . encodeUtf8 $ value
+
+
+logToConsole :: Bool -> Bool -> Query -> ServerApp ()
 -- ^ write a summary of the query to stdout
-queryLogger hit write query =
+logToConsole hit write query =
         echoLocal . T.take 80 $ status `T.append` T.unwords query
     where
         status
@@ -149,11 +163,6 @@ queryLogger hit write query =
 putMVarT :: a -> MVar a -> ReaderT ThreadData IO ()
 putMVarT thing place = liftIO $ putMVar place thing
 
-{-
-putMVarT :: MVar a -> a -> ReaderT ThreadData IO ()
-putMVarT  = (liftIO . ) . putMVar
--}
-
 readMVarT :: MVar a -> ReaderT ThreadData IO a
 readMVarT = liftIO . readMVar
 
@@ -164,16 +173,16 @@ takeMVarT = liftIO . takeMVar
 -- | ReaderT Utilities
 
 viewHandle :: ReaderT ThreadData IO Handle
-viewHandle = asks threadHandle
+viewHandle = asks _threadHandle
 
 viewDatabase :: ReaderT ThreadData IO Database
-viewDatabase = asks database
+viewDatabase = asks _database
 
 viewWrite :: ReaderT ThreadData IO WriteNeeded
-viewWrite = asks writeNeeded
+viewWrite = asks _writeNeeded
 
 viewCache :: ReaderT ThreadData IO DbCache
-viewCache = asks cache
+viewCache = asks _cache
 
 echoLocal :: Text -> ReaderT ThreadData IO ()
 echoLocal = liftIO . putStrLn . T.unpack

@@ -10,16 +10,14 @@ import qualified Data.HashMap.Strict as HM
 import           Data.Text           (Text)
 
 import           Apocrypha.Database  (Query)
-import           Data.Aeson
 
-
--- | Exposed
 
 type Cache = HM.HashMap Query Text
 
 
 emptyCache :: Cache
 emptyCache = HM.fromList []
+
 
 get :: Cache -> Query -> Maybe Text
 get cache query = HM.lookup query cache
@@ -39,7 +37,7 @@ isReadQuery = not . any (`elem` writeOps)
 
 
 writeOps :: [Text]
-writeOps = ["-s", "--set"
+writeOps = [ "-s", "--set"
            , "-d", "--del"
-           , "--pop"
+           , "-p", "--pop"
            , "+", "-", "="]

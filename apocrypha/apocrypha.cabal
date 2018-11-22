@@ -3,7 +3,7 @@ version:             0.1.0.0
 synopsis:            A lightweight, flexible JSON server and client
 description:         Please see README.md
 homepage:            https://www.anardil.net
-license:             BSD3
+license:             MIT
 license-file:        LICENSE
 author:              Austin Voecks
 maintainer:          austin.voecks@gmail.com
