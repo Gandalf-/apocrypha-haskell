@@ -56,6 +56,24 @@ executable apocrypha-server
     mtl,
     async
 
+executable benchmark-apocrypha
+  hs-source-dirs:      src
+  main-is:             benchmark.hs
+  default-language:    Haskell2010
+
+  ghc-options: -Wall -threaded
+
+  if flag(release)
+    ghc-options: -O2
+  else
+    ghc-options: -dynamic -O0
+
+  build-depends:
+    base >= 4.7 && < 5,
+    apocrypha,
+    time,
+    async
+
 library
   hs-source-dirs:      .
 
