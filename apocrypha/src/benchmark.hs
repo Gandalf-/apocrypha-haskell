@@ -26,8 +26,12 @@ run :: String -> IO ()
 run "single-reader"       = bench singleReader
 run "single-writer"       = bench singleWriter
 run "single-reader-cache" = bench singleReaderCache
-run "multi-reader"        = bench multiReader
-run "multi-reader-cache"  = bench multiReaderCache
+
+run "multi-reader"        = bench $ multiReader 10
+run "multi-reader-cache"  = bench $ multiReaderCache 10
+
+run "many-reader"         = bench $ multiReader 20
+run "many-reader-cache"   = bench $ multiReaderCache 20
 run _                     = die "unknown test"
 
 
@@ -64,18 +68,16 @@ singleReaderCache = do
         count = singleCount
 
 
-multiReader :: IO ()
-multiReader = do
+multiReader :: Int -> IO ()
+multiReader count = do
         mapM_ (\ _ -> async singleReader) iters
         singleReader
     where
         iters = [1..count - 1] :: [Int]
-        count = 10
 
-multiReaderCache :: IO ()
-multiReaderCache = do
+multiReaderCache :: Int -> IO ()
+multiReaderCache count = do
         mapM_ (\ _ -> async singleReaderCache) iters
         singleReaderCache
     where
         iters = [1..count - 1] :: [Int]
-        count = 10
