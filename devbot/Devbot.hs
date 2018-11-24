@@ -5,33 +5,36 @@
 
 module Devbot where
 
-import           Apocrypha.Client
-import           GHC.Generics
-
 import           Data.Aeson
-
 import           Data.Foldable       (asum)
+import qualified Data.HashMap.Strict as HM
 import           Data.Maybe          (fromMaybe)
+import qualified Data.Text           as T
+import           GHC.Generics
 import           Text.Read           (readMaybe)
 
-import qualified Data.HashMap.Strict as HM
-import qualified Data.Text           as T
+import           Apocrypha.Client
 
 
-type ConfigMap = HM.HashMap String Config
-type DataMap   = HM.HashMap String Data
+-- | Event
+-- wrapper for the data stored in 'data' and 'events'
 
-
-data Event = Event Name Config Data
+data Event = Event
+       { _name   :: !String
+       , _config :: !Config
+       , _data   :: !Data
+       }
     deriving (Show, Eq)
-type Name = String
 
+
+-- | Data
+-- run time information for a devbot action, populated by devbot
 
 data Data = Data
-          { duration :: !Integer
-          , when     :: !Integer
-          , errors   :: !(Maybe Integer)
-          }
+        { duration :: !Integer
+        , when     :: !Integer
+        , errors   :: !(Maybe Integer)
+        }
     deriving (Show, Eq, Generic)
 
 instance FromJSON Data where
@@ -40,11 +43,14 @@ instance ToJSON Data where
     toEncoding = genericToEncoding defaultOptions
 
 
+-- | Config
+-- devbot action specification, comes from config file
+
 data Config = Config
-            { action   :: ![String]
-            , interval :: !Integer
-            , require  :: !(Maybe String)
-            }
+        { action   :: ![String]
+        , interval :: !Integer
+        , require  :: !(Maybe String)
+        }
     deriving (Eq, Show, Generic)
 
 instance FromJSON Config where
@@ -86,7 +92,14 @@ instance ToJSON Config where
     toEncoding = genericToEncoding defaultOptions
 
 
+-- | Library
+
+type ConfigMap = HM.HashMap String Config
+type DataMap   = HM.HashMap String Data
+
+
 events :: IO [Event]
+-- ^ retrieve all events stored in the database
 events = do
     c <- defaultContext
     cs <- get c ["devbot", "events"] :: IO (Maybe ConfigMap)
