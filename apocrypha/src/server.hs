@@ -4,18 +4,20 @@ import           Control.Concurrent
 import           Control.Concurrent.Async (async)
 import           Control.Monad.Except
 import           Control.Monad.Reader
+import           Data.Aeson               (Value (..))
 import           Data.ByteString.Char8    (ByteString)
 import           Data.Text                (Text)
 import qualified Data.Text                as T
 import           Data.Text.Encoding       (decodeUtf8, encodeUtf8)
 import           Network
+import           System.Environment       (getArgs)
 import           System.Exit              (die)
 import           System.IO
 
 import           Apocrypha.Cache          (Cache, emptyCache, get, put)
 import           Apocrypha.Database       (Query, getDB, runAction, saveDB)
+import           Apocrypha.Options
 import           Apocrypha.Protocol       (protoRead, protoSend)
-import           Data.Aeson
 
 
 type WriteNeeded = MVar Bool
@@ -28,6 +30,7 @@ data ThreadData = ThreadData
         , _database     :: !Database
         , _writeNeeded  :: !WriteNeeded
         , _cache        :: !DbCache
+        , _options      :: !Options
         }
 
 
@@ -35,29 +38,40 @@ main :: IO ()
 -- ^ set up the listening socket, read the database from disk and start
 -- initial worker threads
 main = do
-        server <- listenOn $ PortNumber 9999
-        putStrLn "Server started"
+        arguments <- getOptions <$> getArgs
 
-        db <- getDB :: IO Value
-        case db of
-            Null -> die "Could not parse database on disk"
-            _    -> do
-                dbMV <- newMVar db
-                wrMV <- newMVar False
-                chMV <- newMVar emptyCache
-                void . async $
-                    runReaderT diskWriter (ThreadData stdout dbMV wrMV chMV)
+        case arguments of
+            Nothing -> die usage
 
-                withSocketsDo $
-                    clientForker server dbMV wrMV chMV
+            Just options -> do
+                server <- listenOn $ PortNumber 9999
+
+                db <- getDB :: IO Value
+                case db of
+                    Null -> die "Could not parse database on disk"
+                    _    -> startup server db options
+    where
+        startup server db options = do
+            putStrLn "Server started"
+
+            dbMV <- newMVar db
+            wrMV <- newMVar False
+            chMV <- newMVar emptyCache
+            void . async $
+                runReaderT
+                    diskWriter
+                    (ThreadData stdout dbMV wrMV chMV options)
+
+            withSocketsDo $
+                clientForker server dbMV wrMV chMV options
 
 
-clientForker :: Socket -> Database -> WriteNeeded -> DbCache -> IO b
+clientForker :: Socket -> Database -> WriteNeeded -> DbCache -> Options -> IO b
 -- ^ listen for clients, fork off workers
-clientForker socket d w c = forever $ do
+clientForker socket d w c o = forever $ do
         (h, _, _) <- accept socket
         hSetBuffering h NoBuffering
-        void . async $ runReaderT clientLoop (ThreadData h d w c)
+        void . async $ runReaderT clientLoop (ThreadData h d w c o)
 
 
 diskWriter :: ServerApp ()
@@ -94,7 +108,9 @@ serve :: ByteString -> ServerApp ()
 serve rawQuery = do
 
         cache <- takeMVarT =<< viewCache
-        case get cache query of
+        (Options _ cacheEnabled) <- viewOptions
+
+        case get cacheEnabled cache query of
 
             -- cache hit
             Just value -> do
@@ -103,7 +119,7 @@ serve rawQuery = do
                 replyToClient value =<< viewHandle
                 logToConsole cacheHit noChange query
 
-            -- cache miss
+            -- cache miss, or disabled
             Nothing -> do
                 db <- takeMVarT =<< viewDatabase
 
@@ -148,8 +164,10 @@ replyToClient value h = liftIO . protoSend h . encodeUtf8 $ value
 
 logToConsole :: Bool -> Bool -> Query -> ServerApp ()
 -- ^ write a summary of the query to stdout
-logToConsole hit write query =
-        echoLocal . T.take 80 $ status `T.append` T.unwords query
+logToConsole hit write query = do
+        (Options enableLog _) <- viewOptions
+        when enableLog $
+            echoLocal . T.take 80 $ status `T.append` T.unwords query
     where
         status
             | hit && write = "? "       -- this shouldn't happen
@@ -183,6 +201,9 @@ viewWrite = asks _writeNeeded
 
 viewCache :: ReaderT ThreadData IO DbCache
 viewCache = asks _cache
+
+viewOptions :: ReaderT ThreadData IO Options
+viewOptions = asks _options
 
 echoLocal :: Text -> ReaderT ThreadData IO ()
 echoLocal = liftIO . putStrLn . T.unpack

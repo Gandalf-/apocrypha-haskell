@@ -185,7 +185,6 @@ action (Action db@(Object _) _ output t c) ("--pop" : _)
         | empty db  = Action  db False output t c
         | otherwise = dbError db "cannot pop from a dictionary"
 
-
 -- pop - bottom
 action (Action a _ _ _ _) ("--pop" : _) =
         dbError a "this type does not support pop"
@@ -256,9 +255,11 @@ dereference original@(Action _ _ _ top c)  (key : xs) =
 
 dereference a [] = a
 
+
 toValue :: [Text] -> Value
 toValue [x] = String x
 toValue xs  = Array . V.fromList $ map String xs
+
 
 empty :: Value -> Bool
 -- ^ determine if a polymorphic value is empty
@@ -272,6 +273,7 @@ empty _          = False
 -- | Presentation
 showValue :: Value -> Text
 showValue = decodeUtf8 . B.toStrict . encodePretty
+
 
 pretty :: Context -> Value -> [Text]
 pretty _ Null = []
@@ -287,6 +289,7 @@ pretty (Context _ _)    (String s) = [s]
 
 pretty (Context True m) v = addContext m $ T.pack $ show v
 pretty (Context _ _)    v = [T.pack $ show v]
+
 
 addContext :: [Text] -> Text -> [Text]
 -- ^ create the context explanation for a value
@@ -322,15 +325,18 @@ dbError :: Value -> Text -> Action
 dbError v msg =
         Action v False ["error: " `T.append` msg] HM.empty (Context False [])
 
+
 getDB :: IO Value
 getDB = do
         file <- defaultDB
         fromMaybe Null . decodeStrict . B8.pack <$> readFile file
 
+
 saveDB :: Value -> IO ()
 saveDB v = do
         file <- defaultDB
         B.writeFile file $ encode v
+
 
 defaultDB :: IO String
 defaultDB = (++ "/.db.json") <$> getHomeDirectory

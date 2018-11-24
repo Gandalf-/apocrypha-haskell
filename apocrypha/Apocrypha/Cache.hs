@@ -19,8 +19,9 @@ emptyCache :: Cache
 emptyCache = HM.fromList []
 
 
-get :: Cache -> Query -> Maybe Text
-get cache query = HM.lookup query cache
+get :: Bool -> Cache -> Query -> Maybe Text
+get True cache query = HM.lookup query cache
+get False _ _        = Nothing
 
 
 put :: Cache -> Query -> Text -> Cache
