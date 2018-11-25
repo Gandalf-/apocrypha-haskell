@@ -1,7 +1,6 @@
-module Main where
-
-import           Apocrypha.Client
-import           Devbot
+module Devbot.Bot
+    ( runBot
+    ) where
 
 import           Control.Concurrent    (threadDelay)
 import           Data.List             (intercalate)
@@ -11,18 +10,21 @@ import           System.IO             (BufferMode (..), hSetBuffering, stdout)
 import           System.Process        (ProcessHandle, getProcessExitCode,
                                         spawnCommand, waitForProcess)
 
+import           Apocrypha.Client
+import           Devbot.Core
+
+
 type State = [Task]
+
 data Task = Task
-          { event   :: Event
-          , process :: Maybe ProcessHandle
-          , start   :: StartTime
+          { _event   :: Event
+          , _process :: Maybe ProcessHandle
+          , _start   :: Integer
           }
 
-type StartTime = Integer
 
-
-main :: IO ()
-main = do
+runBot :: IO ()
+runBot = do
         putStrLn "devbot starting up"
         hSetBuffering stdout LineBuffering
 
@@ -68,7 +70,7 @@ handle task@(Task (Event _ _ d) Nothing _) = do
             else return task
     where
         ready :: Integer -> Data -> Bool
-        ready now (Data _ when _) = now > when
+        ready now (Data _ _when _) = now > _when
 
 handle task@(Task _ (Just h) _) = do
         code <- getProcessExitCode h
@@ -91,7 +93,7 @@ check task@(Task (Event n c d) p s) = do
             else return $ Task (Event n c (backoff now d)) p s
     where
         backoff :: Integer -> Data -> Data
-        backoff now (Data d _ e) = Data d (now + 30) e
+        backoff now (Data _d _ _e) = Data _d (now + 30) _e
 
 
 run :: Task -> IO Task
@@ -108,9 +110,9 @@ success :: Task -> IO Task
 success (Task event@(Event _ c _) _ startTime) = do
         -- the command succeeded, set errors to Nothing, and determine next
         -- time to run
-        duration <- negate . (startTime -) <$> getTime
+        elapsed <- negate . (startTime -) <$> getTime
 
-        let newEvent = clearErrors $ updateTime event next duration
+        let newEvent = clearErrors $ updateTime event next elapsed
             newTask  = Task newEvent Nothing 0
 
         flush newEvent
@@ -133,9 +135,9 @@ failure (Task event@(Event n _ d) _ startTime) = do
 
         -- next <- getTime >>= (return . (+ 1))
         next <- (+ backoff) <$> getTime
-        duration <- negate . (startTime -) <$> getTime
+        elapsed <- negate . (startTime -) <$> getTime
 
-        let newEvent = incrementError $ updateTime event next duration
+        let newEvent = incrementError $ updateTime event next elapsed
             newTask  = Task newEvent Nothing 0
 
         flush newEvent
@@ -148,20 +150,20 @@ failure (Task event@(Event n _ d) _ startTime) = do
         getBackoff (Data _ _ (Just e)) = (e + 1) * 10
 
         incrementError :: Event -> Event
-        incrementError (Event n c (Data du wh Nothing)) =
-            Event n c (Data du wh (Just 1))
+        incrementError (Event _n _c (Data _d _w Nothing)) =
+            Event _n _c (Data _d _w (Just 1))
 
-        incrementError (Event n c (Data du wh (Just e))) =
-            Event n c (Data du wh (Just $ e + 1))
+        incrementError (Event _n _c (Data _d _w (Just e))) =
+            Event _n _c (Data _d _w (Just $ e + 1))
 
 
 updateTime :: Event -> Integer -> Integer -> Event
-updateTime (Event n c (Data _ _ e)) newTime duration =
-        Event n c (Data duration newTime e)
+updateTime (Event n c (Data _ _ e)) newTime elapsed =
+        Event n c (Data elapsed newTime e)
 
 
 nextRun :: Integer -> Config -> Integer
-nextRun time (Config _ interval _) = time + interval
+nextRun time (Config _ _interval _) = time + _interval
 
 
 flush :: Event -> IO ()

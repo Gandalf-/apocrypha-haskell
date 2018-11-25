@@ -1,4 +1,6 @@
-module Main where
+module Devbot.Status
+    ( runStatus
+    ) where
 
 import           Apocrypha.Client (keys')
 import           System.Directory (doesFileExist, getHomeDirectory)
@@ -6,8 +8,8 @@ import           System.Exit      (ExitCode (..))
 import           System.Process   (spawnCommand, waitForProcess)
 
 
-main :: IO ()
-main = do
+runStatus :: IO ()
+runStatus = do
         databaseAlive <- checkAlive
 
         if databaseAlive

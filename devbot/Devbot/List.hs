@@ -1,14 +1,16 @@
-module Main where
+module Devbot.List
+    ( runList
+    ) where
 
 import           ColorText
-import           Devbot
+import           Devbot.Core
 
 import           Data.List             (intercalate)
 import           Data.Time.Clock.POSIX (getPOSIXTime)
 
 
-main :: IO ()
-main = events >>= mapM_ printEvent
+runList :: IO ()
+runList = events >>= mapM_ printEvent
 
 
 printEvent :: Event -> IO ()
@@ -30,10 +32,10 @@ printName name = decorate name green
 
 printAction :: Config -> String
 printAction (Config a _ _ )  =
-        decorate action blue
+        decorate _action blue
     where
-        action = "    " ++ intercalate pad a
-        pad    = "\n    "
+        _action = "    " ++ intercalate pad a
+        pad     = "\n    "
 
 
 printInterval :: Config -> String
@@ -52,8 +54,8 @@ printOptional (Config _ _ req) (Data d _ errs) =
         printErrors e = ", " ++ decorate (show e ++ " errors") red
 
         printDuration :: Integer -> String
-        printDuration d =
-            ", " ++ decorate ("took " ++ show d ++ " seconds") cyan
+        printDuration _d =
+            ", " ++ decorate ("took " ++ show _d ++ " seconds") cyan
 
         printRequire :: String -> String
         printRequire r = ", requires " ++ r
@@ -83,9 +85,17 @@ now :: IO Integer
 now = round <$> getPOSIXTime
 
 
+blue :: Decoration
 blue   = (Blue,   NoColor, Null)
-black  = (White,  NoColor, Null)
+
+green :: Decoration
 green  = (Green,  NoColor, Bold)
+
+yellow :: Decoration
 yellow = (Yellow, NoColor, Null)
+
+red :: Decoration
 red    = (Red,    NoColor, Null)
+
+cyan :: Decoration
 cyan   = (Cyan,   NoColor, Null)

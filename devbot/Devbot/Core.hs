@@ -3,7 +3,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
 
-module Devbot where
+module Devbot.Core where
 
 import           Data.Aeson
 import           Data.Foldable       (asum)
