@@ -57,13 +57,14 @@ main = do
             dbMV <- newMVar db
             wrMV <- newMVar False
             chMV <- newMVar emptyCache
-            void . async $
-                runReaderT
-                    diskWriter
-                    (ThreadData stdout dbMV wrMV chMV options)
+
+            when (_enablePersist options) $
+                persistThread (ThreadData stdout dbMV wrMV chMV options)
 
             withSocketsDo $
                 clientForker server dbMV wrMV chMV options
+
+        persistThread = void . async . runReaderT diskWriter
 
 
 clientForker :: Socket -> Database -> WriteNeeded -> DbCache -> Options -> IO b
@@ -71,7 +72,9 @@ clientForker :: Socket -> Database -> WriteNeeded -> DbCache -> Options -> IO b
 clientForker socket d w c o = forever $ do
         (h, _, _) <- accept socket
         hSetBuffering h NoBuffering
-        void . async $ runReaderT clientLoop (ThreadData h d w c o)
+        forkerThread (ThreadData h d w c o)
+    where
+        forkerThread = void . async . runReaderT clientLoop
 
 
 diskWriter :: ServerApp ()
@@ -108,7 +111,7 @@ serve :: ByteString -> ServerApp ()
 serve rawQuery = do
 
         cache <- takeMVarT =<< viewCache
-        (Options _ cacheEnabled) <- viewOptions
+        (Options _ cacheEnabled _) <- viewOptions
 
         case get cacheEnabled cache query of
 
@@ -165,7 +168,7 @@ replyToClient value h = liftIO . protoSend h . encodeUtf8 $ value
 logToConsole :: Bool -> Bool -> Query -> ServerApp ()
 -- ^ write a summary of the query to stdout
 logToConsole hit write query = do
-        (Options enableLog _) <- viewOptions
+        (Options enableLog _ _) <- viewOptions
         when enableLog $
             echoLocal . T.take 80 $ status `T.append` T.unwords query
     where

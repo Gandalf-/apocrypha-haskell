@@ -8,19 +8,19 @@ module Apocrypha.Database
 
 import           Data.Aeson
 import           Data.Aeson.Encode.Pretty (encodePretty)
-
-import           Data.List                (sort)
-import           Data.Maybe               (fromMaybe)
-import           System.Directory         (getHomeDirectory)
-
 import qualified Data.ByteString.Char8    as B8
 import qualified Data.ByteString.Lazy     as B
 import qualified Data.HashMap.Strict      as HM
+import           Data.List                (sort)
+import           Data.Maybe               (fromMaybe)
 import           Data.Text                (Text)
 import qualified Data.Text                as T
 import           Data.Text.Encoding       (decodeUtf8)
 import qualified Data.Vector              as V
+import           System.Directory         (getHomeDirectory)
 
+
+type Query = [Text]
 
 data Action = Action
         { _value   :: !Value
@@ -30,8 +30,6 @@ data Action = Action
         , _context :: !Context
         }
     deriving (Show, Eq)
-
-type Query = [Text]
 
 data Context = Context
         { _enabled :: !Bool
