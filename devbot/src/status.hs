@@ -37,6 +37,7 @@ checkRunning = do
             _           -> status StalePid
 
 
+pfile :: IO String
 pfile = (++ "/.devbot/pid") <$> getHomeDirectory
 
 data Status = Stopped
@@ -44,6 +45,7 @@ data Status = Stopped
             | StalePid
             | Database
 
+status :: Status -> IO ()
 status Running  = putStrLn "✓"
 status Stopped  = putStrLn "✗"
 status StalePid = putStrLn "?"
