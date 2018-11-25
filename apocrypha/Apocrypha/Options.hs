@@ -10,6 +10,7 @@ data Options = Options
         , _enableCache   :: Bool
         , _enablePersist :: Bool
         }
+    deriving (Show, Eq)
 
 
 usage :: String
@@ -42,7 +43,7 @@ data Option
         | NoCaching
         | NoState
         | InvalidOption
-    deriving (Eq)
+    deriving (Show, Eq)
 
 
 parse :: String -> Option

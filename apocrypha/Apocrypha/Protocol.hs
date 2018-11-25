@@ -2,6 +2,7 @@ module Apocrypha.Protocol
     ( client, jClient
     , Context, getContext, defaultContext
     , protoSend, protoRead
+    , Query
     ) where
 
 import           Network
@@ -16,10 +17,8 @@ import           Data.ByteString.Char8 (ByteString)
 import qualified Data.ByteString.Char8 as B8
 import qualified Data.ByteString.Lazy  as B
 
-
 type Context = Maybe Handle
 type Query = [String]
-
 
 -- | Clients
 client :: Context -> Query -> IO (Maybe String)

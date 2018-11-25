@@ -6,76 +6,81 @@ module Apocrypha.Client
     , Context, getContext, defaultContext
     ) where
 
-import           Apocrypha.Protocol
+import           Control.Monad         (void)
 import           Data.Aeson
-
 import qualified Data.ByteString.Char8 as B8
 import qualified Data.ByteString.Lazy  as B
 
+import           Apocrypha.Protocol
 
-keys :: Context -> [String] -> IO [String]
+
+-- | Keys
+
+keys :: Context -> Query -> IO [String]
 keys c items = do
-    result <- client c $ items ++ ["--keys"]
-    return $ maybe [] words result
+        result <- client c $ items ++ ["--keys"]
+        return $ maybe [] words result
 
-keys' :: [String] -> IO [String]
-keys' items = do
-    c <- getContext Nothing
-    keys c items
-
-
-del :: Context -> [String] -> IO ()
-del con items = do
-    _ <- client con $ items ++ ["--del"]
-    return ()
-
-del' :: [String] -> IO ()
-del' items = do
-    c <- defaultContext
-    del c items
+keys' :: Query -> IO [String]
+keys' items =
+        defaultContext >>= (`keys` items)
 
 
-set :: (ToJSON a) => Context -> [String] -> a -> IO ()
-set context items value = do
-    _ <- client context $ items ++ ["--set", v]
-    return ()
-    where v = B8.unpack . B.toStrict . encode $ value
+-- | Del
 
-set' :: (ToJSON a) => [String] -> a -> IO ()
-set' items value = do
-    c <- defaultContext
-    set c items value
+del :: Context -> Query -> IO ()
+del c items =
+        void $ client c $ items ++ ["--del"]
+
+del' :: Query -> IO ()
+del' items =
+        defaultContext >>= (`del` items)
 
 
-get :: (FromJSON a) => Context -> [String] -> IO (Maybe a)
+-- | Set
+
+set :: (ToJSON a) => Context -> Query -> a -> IO ()
+set context items value =
+        void $ client context $ items ++ ["--set", v]
+    where
+        v = B8.unpack . B.toStrict . encode $ value
+
+set' :: (ToJSON a) => Query -> a -> IO ()
+set' items value =
+        defaultContext >>= (\ c -> set c items value)
+
+
+-- | Get
+
+get :: (FromJSON a) => Context -> Query -> IO (Maybe a)
 get context items = do
-    result <- jClient context $ items ++ ["--edit"]
-    case result of
-        Just m  -> return (Data.Aeson.decode m :: (FromJSON a) => Maybe a)
-        Nothing -> return Nothing
+        result <- jClient context $ items ++ ["--edit"]
+        return $ case result of
+            Just m  -> decode m :: (FromJSON a) => Maybe a
+            Nothing -> Nothing
 
-get' :: (FromJSON a) => [String] -> IO (Maybe a)
-get' items = do
-    c <- defaultContext
-    get c items
-
-
-append :: Context -> [String] -> String -> IO ()
-append context items value = do
-    _ <- client context $ items ++ ["+", value]
-    return ()
-
-append' :: [String] -> String -> IO ()
-append' items value = do
-    c <- defaultContext
-    append c items value
+get' :: (FromJSON a) => Query -> IO (Maybe a)
+get' items =
+        defaultContext >>= (`get` items)
 
 
-pop :: Context -> [String] -> IO (Maybe String)
+-- | Append
+
+append :: Context -> Query -> String -> IO ()
+append context items value =
+        void $ client context $ items ++ ["+", value]
+
+append' :: Query -> String -> IO ()
+append' items value =
+        defaultContext >>= (\ c -> append c items value)
+
+
+-- | Pop
+
+pop :: Context -> Query -> IO (Maybe String)
 pop context items =
-    client context $ items ++ ["--pop"]
+        client context $ items ++ ["--pop"]
 
-pop' :: [String] -> IO (Maybe String)
-pop' items = do
-    c <- defaultContext
-    pop c items
+pop' :: Query -> IO (Maybe String)
+pop' items =
+        defaultContext >>= (`pop` items)
