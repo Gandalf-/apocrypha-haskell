@@ -285,8 +285,8 @@ pretty _ v@(Object o)
 pretty (Context True m) (String s) = addContext m s
 pretty (Context _ _)    (String s) = [s]
 
-pretty (Context True m) v = addContext m $ T.pack $ show v
-pretty (Context _ _)    v = [T.pack $ show v]
+pretty (Context True m) v = addContext m $ showValue v
+pretty (Context _ _)    v = [showValue v]
 
 
 addContext :: [Text] -> Text -> [Text]
