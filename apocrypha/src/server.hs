@@ -170,7 +170,7 @@ logToConsole :: Bool -> Bool -> Query -> ServerApp ()
 logToConsole hit write query = do
         (Options enableLog _ _) <- viewOptions
         when enableLog $
-            echoLocal . T.take 80 $ status `T.append` T.unwords query
+            echoLocal . T.take 80 $ status <> T.unwords query
     where
         status
             | hit && write = "? "       -- this shouldn't happen

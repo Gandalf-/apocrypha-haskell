@@ -7,7 +7,7 @@ module Apocrypha.Database
     ) where
 
 import           Data.Aeson
-import           Data.Aeson.Encode.Pretty (encodePretty)
+import qualified Data.Aeson.Encode.Pretty as P
 import qualified Data.ByteString.Char8    as B8
 import qualified Data.ByteString.Lazy     as B
 import qualified Data.HashMap.Strict      as HM
@@ -270,7 +270,10 @@ empty _          = False
 
 -- | Presentation
 showValue :: Value -> Text
-showValue = decodeUtf8 . B.toStrict . encodePretty
+showValue = decodeUtf8 . B.toStrict . encoder
+    where
+        encoder = P.encodePretty' config
+        config = P.Config (P.Spaces 4) P.compare P.Generic False
 
 
 pretty :: Context -> Value -> [Text]
