@@ -3,7 +3,7 @@
 module Apocrypha.Database
     ( Query
     , runAction
-    , getDB, saveDB
+    , getDB, saveDB, defaultDB
     ) where
 
 import           Data.Aeson
@@ -17,7 +17,8 @@ import           Data.Text                (Text)
 import qualified Data.Text                as T
 import           Data.Text.Encoding       (decodeUtf8)
 import qualified Data.Vector              as V
-import           System.Directory         (getHomeDirectory)
+import           System.Directory         (getHomeDirectory, doesFileExist)
+import System.Info (os)
 
 
 type Query = [Text]
@@ -248,7 +249,7 @@ dereference original@(Action _ _ _ top c)  (key : xs) =
         value = HM.lookupDefault Null key top
 
         apply :: Query -> Value -> Action -> Action
-        apply os (String s) a = action a (s : os)
+        apply qs (String s) a = action a (s : qs)
         apply _ _ a           = a
 
 dereference a [] = a
@@ -327,17 +328,22 @@ dbError v msg =
         Action v False ["error: " `T.append` msg] HM.empty (Context False [])
 
 
-getDB :: IO Value
-getDB = do
-        file <- defaultDB
-        fromMaybe Null . decodeStrict . B8.pack <$> readFile file
+getDB :: FilePath -> IO Value
+getDB path = do
+        exists <- doesFileExist path
+        if exists
+          then fromMaybe Null . decodeStrict . B8.pack <$> readFile path
+          else do
+               writeFile path "{}"
+               getDB path
 
 
-saveDB :: Value -> IO ()
-saveDB v = do
-        file <- defaultDB
-        B.writeFile file $ encode v
+saveDB :: FilePath -> Value -> IO ()
+saveDB path v = do
+        B.writeFile path $ encode v
 
 
 defaultDB :: IO String
-defaultDB = (++ "/.db.json") <$> getHomeDirectory
+defaultDB 
+        | os == "mingw32" = (++ "\\.db.json") <$> getHomeDirectory
+        | otherwise       = (++ "/.db.json") <$> getHomeDirectory

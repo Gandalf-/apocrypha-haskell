@@ -15,7 +15,7 @@ import           System.Exit              (die)
 import           System.IO
 
 import           Apocrypha.Cache          (Cache, emptyCache, get, put)
-import           Apocrypha.Database       (Query, getDB, runAction, saveDB)
+import           Apocrypha.Database       (Query, defaultDB, getDB, runAction, saveDB)
 import           Apocrypha.Options
 import           Apocrypha.Protocol       (protoRead, protoSend)
 
@@ -38,15 +38,17 @@ main :: IO ()
 -- ^ set up the listening socket, read the database from disk and start
 -- initial worker threads
 main = do
-        arguments <- getOptions <$> getArgs
+        defaultPath <- defaultDB
+        arguments <- getOptions defaultPath <$> getArgs
 
         case arguments of
             Nothing -> die usage
 
             Just options -> do
                 server <- listenOn $ PortNumber 9999
+                print $ _otherDatabase options
 
-                db <- getDB :: IO Value
+                db <- (getDB $ _otherDatabase options) :: IO Value
                 case db of
                     Null -> die "Could not parse database on disk"
                     _    -> startup server db options
@@ -83,9 +85,10 @@ diskWriter :: ServerApp ()
 diskWriter = forever $ do
         write <- readMVarT =<< viewWrite
         db <- readMVarT =<< viewDatabase
+        (Options _ _ _ path) <- viewOptions
 
         liftIO $ threadDelay oneSecond
-        when write $ liftIO $ saveDB db
+        when write $ liftIO (saveDB path db)
     where
         oneSecond = 1000000
 
@@ -111,7 +114,7 @@ serve :: ByteString -> ServerApp ()
 serve rawQuery = do
 
         cache <- takeMVarT =<< viewCache
-        (Options _ cacheEnabled _) <- viewOptions
+        (Options _ cacheEnabled _ _) <- viewOptions
 
         case get cacheEnabled cache query of
 
@@ -168,7 +171,7 @@ replyToClient value h = liftIO . protoSend h . encodeUtf8 $ value
 logToConsole :: Bool -> Bool -> Query -> ServerApp ()
 -- ^ write a summary of the query to stdout
 logToConsole hit write query = do
-        (Options enableLog _ _) <- viewOptions
+        (Options enableLog _ _ _) <- viewOptions
         when enableLog $
             echoLocal . T.take 80 $ status <> T.unwords query
     where
