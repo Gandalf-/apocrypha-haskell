@@ -19,7 +19,7 @@ import           Apocrypha.Protocol
 keys :: Context -> Query -> IO [String]
 keys c items = do
         result <- client c $ items ++ ["--keys"]
-        return $ maybe [] words result
+        pure $ maybe [] words result
 
 keys' :: Query -> IO [String]
 keys' items =
@@ -55,7 +55,7 @@ set' items value =
 get :: (FromJSON a) => Context -> Query -> IO (Maybe a)
 get context items = do
         result <- jClient context $ items ++ ["--edit"]
-        return $ case result of
+        pure $ case result of
             Just m  -> decode m :: (FromJSON a) => Maybe a
             Nothing -> Nothing
 

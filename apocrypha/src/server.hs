@@ -10,14 +10,16 @@ import           Data.Text                (Text)
 import qualified Data.Text                as T
 import           Data.Text.Encoding       (decodeUtf8, encodeUtf8)
 import           Network
+import           System.Directory         (doesFileExist, removeFile)
 import           System.Environment       (getArgs)
 import           System.Exit              (die)
 import           System.IO
 
 import           Apocrypha.Cache          (Cache, emptyCache, get, put)
-import           Apocrypha.Database       (Query, defaultDB, getDB, runAction, saveDB)
+import           Apocrypha.Database       (Query, defaultDB, getDB, runAction,
+                                           saveDB)
 import           Apocrypha.Options
-import           Apocrypha.Protocol       (protoRead, protoSend)
+import           Apocrypha.Protocol       (protoRead, protoSend, unixSocketPath)
 
 
 type WriteNeeded = MVar Bool
@@ -45,17 +47,17 @@ main = do
             Nothing -> die usage
 
             Just options -> do
-                server <- listenOn $ PortNumber 9999
-                print $ _otherDatabase options
-
-                db <- (getDB $ _otherDatabase options) :: IO Value
+                db <- (getDB $ _databasePath options) :: IO Value
                 case db of
                     Null -> die "Could not parse database on disk"
-                    _    -> startup server db options
+                    _    -> startup db options
     where
-        startup server db options = do
-            putStrLn "Server started"
+        startup :: Value -> Options -> IO ()
+        startup db options = withSocketsDo $ do
+            tcpSocket  <- listenOn $ PortNumber 9999
+            unixSocket <- getUnixSocket
 
+            putStrLn "Server started"
             dbMV <- newMVar db
             wrMV <- newMVar False
             chMV <- newMVar emptyCache
@@ -63,10 +65,22 @@ main = do
             when (_enablePersist options) $
                 persistThread (ThreadData stdout dbMV wrMV chMV options)
 
-            withSocketsDo $
-                clientForker server dbMV wrMV chMV options
+            -- listen on both sockets
+            when (_enableUnix options) $
+                void . async $
+                    clientForker unixSocket dbMV wrMV chMV options
 
+            clientForker tcpSocket dbMV wrMV chMV options
+
+        persistThread :: ThreadData -> IO ()
         persistThread = void . async . runReaderT diskWriter
+
+        getUnixSocket :: IO Socket
+        getUnixSocket = do
+            exists <- doesFileExist unixSocketPath
+            when exists $
+                removeFile unixSocketPath
+            listenOn $ UnixSocket unixSocketPath
 
 
 clientForker :: Socket -> Database -> WriteNeeded -> DbCache -> Options -> IO b
@@ -85,7 +99,7 @@ diskWriter :: ServerApp ()
 diskWriter = forever $ do
         write <- readMVarT =<< viewWrite
         db <- readMVarT =<< viewDatabase
-        (Options _ _ _ path) <- viewOptions
+        path <- _databasePath <$> viewOptions
 
         liftIO $ threadDelay oneSecond
         when write $ liftIO (saveDB path db)
@@ -96,10 +110,10 @@ diskWriter = forever $ do
 clientLoop :: ServerApp ()
 -- ^ read queries from the client, serve them or quit
 clientLoop =
-        flip catchError (\_ -> return ()) $ do
+        flip catchError (\_ -> pure ()) $ do
               query <- getQuery
               case query of
-                    Nothing  -> return ()
+                    Nothing  -> pure ()
                     (Just q) -> serve q >> clientLoop
 
 
@@ -114,7 +128,7 @@ serve :: ByteString -> ServerApp ()
 serve rawQuery = do
 
         cache <- takeMVarT =<< viewCache
-        (Options _ cacheEnabled _ _) <- viewOptions
+        cacheEnabled <- _enableCache <$> viewOptions
 
         case get cacheEnabled cache query of
 
@@ -171,7 +185,7 @@ replyToClient value h = liftIO . protoSend h . encodeUtf8 $ value
 logToConsole :: Bool -> Bool -> Query -> ServerApp ()
 -- ^ write a summary of the query to stdout
 logToConsole hit write query = do
-        (Options enableLog _ _ _) <- viewOptions
+        enableLog <- _enableLog <$> viewOptions
         when enableLog $
             echoLocal . T.take 80 $ status <> T.unwords query
     where

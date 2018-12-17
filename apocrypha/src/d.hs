@@ -11,7 +11,7 @@ main = do
 
 
 display :: Maybe String -> IO ()
-display Nothing  = return ()
+display Nothing  = pure ()
 display (Just s)
-        | null s || s == "\n" = return ()
+        | null s || s == "\n" = pure ()
         | otherwise           = putStr s

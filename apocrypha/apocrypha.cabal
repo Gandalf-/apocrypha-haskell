@@ -53,6 +53,7 @@ executable apocrypha-server
     apocrypha,
     aeson,
     network,
+    directory,
     text,
     unordered-containers,
     bytestring,
