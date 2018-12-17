@@ -2,6 +2,10 @@ module Main where
 
 import           Apocrypha.Client
 import           Control.Concurrent.Async
+import qualified Data.HashMap.Lazy        as HM
+import           Data.List                (intercalate, sortOn)
+import           Data.Maybe               (fromMaybe)
+import           Data.Ord                 (Down (..))
 import           Data.Time.Clock.POSIX    (getPOSIXTime)
 import           System.Environment       (getArgs)
 import           System.Exit
@@ -10,7 +14,7 @@ main :: IO ()
 main = do
         args <- getArgs
         case args of
-            [] -> die "usage: [test name]"
+            [] -> run "--help"
             xs -> run $ head xs
 
 
@@ -22,17 +26,51 @@ bench f = do
         print (end - start)
 
 
+testCaseMap :: HM.HashMap String (IO ())
+-- ^ this is intentionally a lazy hashmap, so we don't evaluate early
+testCaseMap = HM.fromList
+    [ ("single-reader", bench singleReader)
+    , ("single-writer", bench singleWriter)
+    , ("single-reader-cache", bench singleReaderCache)
+
+    , ("multi-reader", bench $ multiReader 10)
+    , ("multi-reader-cache", bench $ multiReaderCache 10)
+
+    , ("many-reader", bench $ multiReader 20)
+    , ("many-reader-cache", bench $ multiReaderCache 20)
+
+    , ("all-tests", runAll)
+    ]
+
+
 run :: String -> IO ()
-run "single-reader"       = bench singleReader
-run "single-writer"       = bench singleWriter
-run "single-reader-cache" = bench singleReaderCache
+-- look up and run a test case, otherwise show the available tests
+run test =
+        fromMaybe showUsage testCase
+    where
+        testCase :: Maybe (IO ())
+        testCase = HM.lookup test testCaseMap
 
-run "multi-reader"        = bench $ multiReader 10
-run "multi-reader-cache"  = bench $ multiReaderCache 10
+        showUsage :: IO ()
+        showUsage = die
+            $ ("options:\n  " ++)
+            $ intercalate "\n  "
+            $ sortOn Down
+            $ HM.keys testCaseMap
 
-run "many-reader"         = bench $ multiReader 20
-run "many-reader-cache"   = bench $ multiReaderCache 20
-run _                     = die "unknown test"
+type HashMapEntry = (String, IO ())
+
+runAll :: IO ()
+-- ^ run all test cases, except this one
+runAll =
+        mapM_ runner $ filter notSelf $ HM.toList testCaseMap
+    where
+        notSelf :: HashMapEntry -> Bool
+        notSelf (name, _) = name /= "all-tests"
+
+        runner :: HashMapEntry -> IO ()
+        runner (name, f) =
+            putStrLn name >> f >> putStrLn ""
 
 
 singleCount :: Int

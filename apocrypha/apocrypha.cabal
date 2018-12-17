@@ -75,6 +75,7 @@ executable bench-apocrypha
   build-depends:
     base >= 4.7 && < 5,
     apocrypha,
+    unordered-containers,
     time,
     async
 
