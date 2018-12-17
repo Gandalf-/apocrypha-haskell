@@ -101,17 +101,17 @@ type DataMap   = HM.HashMap String Data
 events :: IO [Event]
 -- ^ retrieve all events stored in the database
 events = do
-    c <- defaultContext
-    cs <- get c ["devbot", "events"] :: IO (Maybe ConfigMap)
-    ds <- get c ["devbot", "data"  ] :: IO (Maybe DataMap)
+        c <- defaultContext
+        cs <- get c ["devbot", "events"] :: IO (Maybe ConfigMap)
+        ds <- get c ["devbot", "data"  ] :: IO (Maybe DataMap)
 
-    let configs = HM.toList . fromMaybe (HM.fromList []) $ cs
-        datas = fromMaybe (HM.fromList []) ds
+        let configs = HM.toList . fromMaybe (HM.fromList []) $ cs
+            datas = fromMaybe (HM.fromList []) ds
 
-        parse :: (String, Config) -> Event
-        parse (name, config) =
-            Event name config . fromMaybe defaultData $ HM.lookup name datas
+            parse :: (String, Config) -> Event
+            parse (name, config) =
+                Event name config . fromMaybe defaultData $ HM.lookup name datas
 
-    return $ map parse configs
+        return $ map parse configs
     where
-          defaultData = Data 0 0 Nothing
+        defaultData = Data 0 0 Nothing

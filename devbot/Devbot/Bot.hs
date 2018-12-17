@@ -3,6 +3,7 @@ module Devbot.Bot
     ) where
 
 import           Control.Concurrent    (threadDelay)
+import           Control.Monad         (forever)
 import           Data.List             (intercalate)
 import           Data.Time.Clock.POSIX (getPOSIXTime)
 import           System.Exit           (ExitCode (..))
@@ -28,11 +29,8 @@ runBot = do
         putStrLn "devbot starting up"
         hSetBuffering stdout LineBuffering
 
-        loop
-    where
-        loop = do
-          _ <- events >>= runner 1 . startingState
-          loop
+        forever $
+          events >>= runner 1 . startingState
 
 
 startingState :: [Event] -> State
@@ -45,7 +43,7 @@ runner :: Integer -> State -> IO State
 -- events and start us again
 runner runs state =
         if runs > minRunsToRestart && noRunners state
-          then return []
+          then pure []
           else do
               threadDelay $ 1 * second
               mapM handle state >>= runner (runs + 1)
@@ -67,7 +65,7 @@ handle task@(Task (Event _ _ d) Nothing _) = do
 
         if ready time d
             then check task
-            else return task
+            else pure task
     where
         ready :: Integer -> Data -> Bool
         ready now (Data _ _when _) = now > _when
@@ -76,7 +74,7 @@ handle task@(Task _ (Just h) _) = do
         code <- getProcessExitCode h
         case code of
             -- still running
-            Nothing          -> return task
+            Nothing          -> pure task
 
             -- finished
             Just ExitSuccess -> success task
@@ -90,7 +88,7 @@ check task@(Task (Event n c d) p s) = do
         met <- requirementsMet n c
         if met
             then run task
-            else return $ Task (Event n c (backoff now d)) p s
+            else pure $ Task (Event n c (backoff now d)) p s
     where
         backoff :: Integer -> Data -> Data
         backoff now (Data _d _ _e) = Data _d (now + 30) _e
@@ -116,13 +114,13 @@ success (Task event@(Event _ c _) _ startTime) = do
             newTask  = Task newEvent Nothing 0
 
         flush newEvent
-        return newTask
+        pure newTask
     where
         next = nextRun startTime c
 
         clearErrors :: Event -> Event
         clearErrors (Event n co (Data du wh _)) =
-          Event n co (Data du wh Nothing)
+            Event n co (Data du wh Nothing)
 
 
 failure :: Task -> IO Task
@@ -133,7 +131,7 @@ failure (Task event@(Event n _ d) _ startTime) = do
                         , " failed, backing off "
                         , show backoff, " seconds"]
 
-        -- next <- getTime >>= (return . (+ 1))
+        -- next <- getTime >>= (pure . (+ 1))
         next <- (+ backoff) <$> getTime
         elapsed <- negate . (startTime -) <$> getTime
 
@@ -141,7 +139,7 @@ failure (Task event@(Event n _ d) _ startTime) = do
             newTask  = Task newEvent Nothing 0
 
         flush newEvent
-        return newTask
+        pure newTask
     where
         backoff = getBackoff d
 
@@ -177,24 +175,20 @@ logger msg = do
 
 
 requirementsMet :: String -> Config -> IO Bool
-requirementsMet _ (Config _ _ Nothing) = return True
+requirementsMet _ (Config _ _ Nothing) = pure True
 requirementsMet n (Config _ _ (Just r)) = do
         req <- get' ["devbot", "requirements", r]
 
         case req of
-            Nothing -> do
-                logger doesntExist
-                return False
+            Nothing  -> logger doesntExist >> pure False
             (Just a) -> runCheck a
     where
         runCheck :: String -> IO Bool
         runCheck cmd = do
             code <- spawnCommand cmd >>= waitForProcess
             case code of
-                ExitSuccess -> return True
-                _           -> do
-                    logger cmdFailed
-                    return False
+                ExitSuccess -> pure True
+                _           -> logger cmdFailed >> pure False
 
         doesntExist =
           n ++ " references requirement that doesn't exist"
