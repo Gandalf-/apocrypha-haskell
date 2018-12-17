@@ -117,7 +117,9 @@ action (Action _ _ output t c) ("--del" : _) =
 
 -- append - array
 action (Action (Array a  ) _ output t c) ("+" : values) =
-        Action (Array new) True output t c
+        if V.length new == 1
+            then Action (String $ head values) True output t c
+            else Action (Array new) True output t c
     where
         new :: V.Vector Value
         new   = a V.++ right
