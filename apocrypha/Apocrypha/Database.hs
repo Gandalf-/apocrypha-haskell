@@ -15,10 +15,10 @@ import           Data.List                (sort)
 import           Data.Maybe               (fromMaybe)
 import           Data.Text                (Text)
 import qualified Data.Text                as T
-import           Data.Text.Encoding       (decodeUtf8)
+import           Data.Text.Encoding       (decodeUtf8, encodeUtf8)
 import qualified Data.Vector              as V
-import           System.Directory         (getHomeDirectory, doesFileExist)
-import System.Info (os)
+import           System.Directory         (doesFileExist, getHomeDirectory)
+import           System.Info              (os)
 
 
 type Query = [Text]
@@ -122,7 +122,7 @@ action (Action (Array a  ) _ output t c) ("+" : values) =
             else Action (Array new) True output t c
     where
         new :: V.Vector Value
-        new   = a V.++ right
+        new   = a <> right
 
         right :: V.Vector Value
         right = V.fromList $ map String values
@@ -141,7 +141,7 @@ action (Action db@(Object _) _ output t c) ("+" : values)
 action (Action value@(String _) _ output t c) ("+" : values) =
         Action (Array new) True output t c
     where
-        new   = left V.++ right
+        new   = left <> right
         left  = V.fromList [value]
         right = V.fromList $ map String values
 
@@ -320,14 +320,14 @@ runAction db query =
                 _          -> error "database top level is not a map"
 
         result :: Text
-        result = T.intercalate "\n" output `T.append` "\n"
+        result = T.intercalate "\n" output <> "\n"
 
 
 dbError :: Value -> Text -> Action
 -- ^ create an error out of this level to pass back up, do not modify the
 -- value, do not report changes
 dbError v msg =
-        Action v False ["error: " `T.append` msg] HM.empty (Context False [])
+        Action v False ["error: " <> msg] HM.empty (Context False [])
 
 
 getDB :: FilePath -> IO Value
@@ -341,11 +341,11 @@ getDB path = do
 
 
 saveDB :: FilePath -> Value -> IO ()
-saveDB path v = do
-        B.writeFile path $ encode v
+saveDB path v =
+        B8.writeFile path $ encodeUtf8 $ showValue v
 
 
 defaultDB :: IO String
-defaultDB 
+defaultDB
         | os == "mingw32" = (++ "\\.db.json") <$> getHomeDirectory
         | otherwise       = (++ "/.db.json") <$> getHomeDirectory
