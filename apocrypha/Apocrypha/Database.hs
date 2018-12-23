@@ -111,8 +111,9 @@ action (Action v _ output t c) ("--set" : values) =
 
 
 -- del
-action (Action _ _ output t c) ("--del" : _) =
-        Action Null True output t c
+action (Action db _ output t c) ("--del" : _)
+        | empty db  = Action Null False output t c
+        | otherwise = Action Null True  output t c
 
 
 -- append - array
