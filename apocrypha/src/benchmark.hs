@@ -2,10 +2,9 @@ module Main where
 
 import           Apocrypha.Client
 import           Control.Concurrent.Async
-import qualified Data.HashMap.Lazy        as HM
-import           Data.List                (intercalate, sortOn)
+import           Data.List                (intercalate)
+import qualified Data.Map.Lazy            as Map
 import           Data.Maybe               (fromMaybe)
-import           Data.Ord                 (Down (..))
 import           Data.Time.Clock.POSIX    (getPOSIXTime)
 import           System.Environment       (getArgs)
 import           System.Exit
@@ -26,9 +25,9 @@ bench f = do
         print (end - start)
 
 
-testCaseMap :: HM.HashMap String (IO ())
+testCaseMap :: Map.Map String (IO ())
 -- ^ this is intentionally a lazy hashmap, so we don't evaluate early
-testCaseMap = HM.fromList
+testCaseMap = Map.fromList
     [ ("single-reader", bench singleReader)
     , ("single-writer", bench singleWriter)
     , ("single-reader-cache", bench singleReaderCache)
@@ -49,21 +48,21 @@ run test =
         fromMaybe showUsage testCase
     where
         testCase :: Maybe (IO ())
-        testCase = HM.lookup test testCaseMap
+        testCase = Map.lookup test testCaseMap
 
         showUsage :: IO ()
         showUsage = die
             $ ("options:\n  " ++)
             $ intercalate "\n  "
-            $ sortOn Down
-            $ HM.keys testCaseMap
+            $ reverse
+            $ Map.keys testCaseMap
 
 type HashMapEntry = (String, IO ())
 
 runAll :: IO ()
 -- ^ run all test cases, except this one
 runAll =
-        mapM_ runner $ filter notSelf $ HM.toList testCaseMap
+        mapM_ runner $ filter notSelf $ Map.toList testCaseMap
     where
         notSelf :: HashMapEntry -> Bool
         notSelf (name, _) = name /= "all-tests"
