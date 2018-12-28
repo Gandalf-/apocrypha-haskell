@@ -1,7 +1,7 @@
 module Apocrypha.Protocol
     ( client, jClient
     , Context, getContext, defaultContext, unixSocketPath
-    , protoSend, protoRead
+    , protoSend, protoRead, protocol
     , Query
     ) where
 
@@ -85,6 +85,8 @@ protoSend :: Handle -> ByteString -> IO ()
 protoSend h = B8.hPut h . protocol
 
 protoRead :: Handle -> IO (Maybe ByteString)
+-- ^ this is a blocking call. if the writer says there are more bytes than
+-- they actually send, this will wait forever
 protoRead handle = do
         rawSize <- B8.hGetSome handle 4
 
@@ -106,7 +108,8 @@ reader handle previous bytesRemaining
 
 protocol :: ByteString -> ByteString
 -- ^ The Apocrypha protocol is simple - send 4 bytes to represent the length
--- of the message, then the message
+-- of the message, then the message.
+-- This means the maximum message size is 2 ** 32 bytes ~ 4.2GB
 protocol message =
         len message <> message
     where

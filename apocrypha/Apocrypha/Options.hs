@@ -4,6 +4,7 @@ module Apocrypha.Options
     , usage
     ) where
 
+import           Apocrypha.Internal.Options
 
 data Options = Options
         { _enableLog     :: Bool
@@ -28,7 +29,7 @@ usage = unlines
 
 
 getOptions :: FilePath -> [String] -> Maybe Options
-getOptions path args
+getOptions defaultDbPath args
         | parseError = Nothing
         | otherwise  = Just $
             Options enableLog enableCache enablePersist database enableUnix
@@ -40,34 +41,4 @@ getOptions path args
         enableLog     = NoLogging `notElem` options
         enableCache   = NoCaching `notElem` options
         enableUnix    = NoUnix    `notElem` options
-        database      = chooseDB options path
-
-
--- | Internal
-
-data Option
-        = NoLogging
-        | NoCaching
-        | NoState
-        | NoUnix
-        | OtherDatabase String
-        | InvalidOption
-    deriving (Show, Eq)
-
-
-chooseDB :: [Option] -> String -> String
--- ^ look through the provided options for an alternate database, if one
--- isn't found, use the default
-chooseDB [] p                  = p
-chooseDB (OtherDatabase p:_) _ = p
-chooseDB (_:xs) p              = chooseDB xs p
-
-
-parse :: [String] -> [Option]
-parse []                  = []
-parse ("--database":x:xs) = OtherDatabase x : parse xs
-parse ("--no-cache":xs)   = NoCaching : parse xs
-parse ("--no-unix":xs)    = NoUnix : parse xs
-parse ("--headless":xs)   = NoLogging : parse xs
-parse ("--stateless":xs)  = NoState : parse xs
-parse (_:xs)              = InvalidOption : parse xs
+        database      = chooseDB options defaultDbPath

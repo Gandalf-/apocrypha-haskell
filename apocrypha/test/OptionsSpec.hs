@@ -1,28 +1,48 @@
 module OptionsSpec (spec) where
 
+import           Apocrypha.Internal.Options
 import           Apocrypha.Options
 import           Test.Hspec
 
 
 spec :: Spec
 spec = do
-        describe "options" $
-          it "enabled everything by default" $
-            getOptions [] `shouldBe` Just defaultOptions
+        -- getOptions
+        describe "get options" $
+          it "invalid" $
+            getOptions path ["junk", "--headless"] `shouldBe` Nothing
 
-        describe "options" $
+        describe "get options" $
           it "headless" $
-            getOptions ["--headless"] `shouldBe` Just headless
+            getOptions path ["--headless"] `shouldBe` Just headless
 
-        describe "options" $
-          it "stateless" $
-            getOptions ["--stateless"] `shouldBe` Just stateless
 
-        describe "options" $
-          it "parse error" $
-            getOptions ["invalid"] `shouldBe` Nothing
+        -- parse
+        describe "parse" $
+          it "db path" $
+            parse ["--database", "a"] `shouldBe` [OtherDatabase "a"]
 
-     where
-         defaultOptions = Options True True True
-         headless       = Options False True True
-         stateless      = Options True True False
+        describe "parse" $
+          it "db path invalid" $
+            parse ["--database"] `shouldBe` [InvalidOption]
+
+        describe "parse" $
+          it "headless" $
+            parse ["--headless"] `shouldBe` [NoLogging]
+
+
+        -- chooseDB
+        describe "choose database" $
+          it "default" $
+            chooseDB [NoLogging, NoState] "a" `shouldBe` "a"
+
+        describe "choose database" $
+          it "not found" $
+            chooseDB [] "a" `shouldBe` "a"
+
+        describe "choose database" $
+          it "alternate" $
+            chooseDB [NoLogging, OtherDatabase "b"] "a" `shouldBe` "b"
+    where
+        headless = Options False True True path True
+        path = "/default/db/path"
