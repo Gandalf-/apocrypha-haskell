@@ -8,8 +8,16 @@ official API documentation.
 
 # Features
 
-* *Performance* - up to 12,500 queries per second per CPU, semi linear
-  performance scaling with additional CPUs
+* *Performance* - up to 18,000 queries per second per CPU, semi linear
+  performance scaling with additional CPUs. Benchmarking shows 8 CPUS ~= 86,000
+  queries/sec using a local Unix Domain Socket.
+
+* *Compatability* - full compatability with the Python implementation. Scripts
+  written using the Python API may see a 2x to 5x performance increase. The
+  Haskell client API uses the same patterns as the Python API.
+
+* *Easy of Use* - the client API integrates the `Data.Aeson` package for
+  straight forward JSON object usage.
 
 ## ACID
 
@@ -25,45 +33,33 @@ official API documentation.
 * `--no-cache` - disable caching, decreases read performance depending on value
   complexity
 * `--stateless` - do not write changes back to disk
+* `--no-unix` - do not listen on a local Unix Domain Socket, only TCP
+* `--database <path>` - use an alternate file on disk for the database. You can
+  use this to serve an arbitrary JSON file to the network.
 
 
 # Benchmarks
 
 Performance testing done with the `bench-apocrypha` utility, run against the
-Haskell binary produced by `make release` and the latest Python implementation.
-These results were produced on Ubuntu 16.04, 4 i7-5500 CPU, 16GB RAM.
+Haskell binary produced by `make release` and the latest Python implementation
+available through `pip`.  These results were produced on Ubuntu 16.04, 32
+Platinum 8168 CPU @ 2.70GHz
 
 ### Workloads
 
 Seconds to complete
 
-|                     | Python | Haskell | Speedup | Queries      |
-|---------------------|--------|---------|---------|--------------|
-| Single reader       |        | 5.0264  |         | 100,000      |
-| Single reader cache |        | 4.0470  |         | 100,000      |
-| Single writer       |        | 5.1017  |         | 100,000      |
-|                     |        |         |         |              |
-| Multi reader        |        | 18.7190 |         | 10 * 100,000 |
-| Multi reader cache  |        | 18.5680 |         | 10 * 100,000 |
-|                     |        |         |         |              |
-| Many reader         |        | 35.7385 |         | 20 * 100,000 |
-| Many reader cache   |        |         |         | 20 * 100,000 |
-
-### Workloads with Tracing
-
-Seconds to complete
-
-|                     | Python   | Haskell | Speedup | Queries      |
-|---------------------|----------|---------|---------|--------------|
-| Single reader       | 6.6986   | 3.4260  | 195%    | 100,000      |
-| Single reader cache | 5.6983   | 3.1076  | 183%    | 100,000      |
-| Single writer       | 7.2524   | 3.4295  | 211%    | 100,000      |
-|                     |          |         |         |              |
-| Multi reader        | 152.0364 | 29.2545 | 519%    | 10 * 100,000 |
-| Multi reader cache  | 140.1895 | 26.9502 | 520%    | 10 * 100,000 |
-|                     |          |         |         |              |
-| Many reader         | 312.3077 | 57.3516 | 544%    | 20 * 100,000 |
-| Many reader cache   | 298.4110 | 54.0288 | 552%    | 20 * 100,000 |
+|                     | Python  | Haskell | Speedup | Queries      |
+|---------------------|---------|---------|---------|--------------|
+| Single reader       | 4.0533  | 2.5743  | 157%    | 100,000      |
+| Single reader cache | 4.0559  | 2.3132  | 175%    | 100,000      |
+| Single writer       | 4.7642  | 3.0133  | 158%    | 100,000      |
+|                     |         |         |         |              |
+| Multi reader        | 53.3462 | 9.3792  | 568%    | 10 * 100,000 |
+| Multi reader cache  | 43.5055 | 8.9738  | 484%    | 10 * 100,000 |
+|                     |         |         |         |              |
+| Many reader         | 96.2097 | 19.6056 | 490%    | 20 * 100,000 |
+| Many reader cache   | 87.5551 | 19.2085 | 455%    | 20 * 100,000 |
 
 ### Throughput
 
@@ -71,12 +67,43 @@ Average queries completed per second
 
 |                     | Python | Haskell | Difference | Queries      |
 |---------------------|--------|---------|------------|--------------|
-| Single reader       | 14,928 | 29,188  | +14,260    | 100,000      |
-| Single reader cache | 17,549 | 32,179  | +14,630    | 100,000      |
-| Single writer       | 13,788 | 29,158  | +14,370    | 100,000      |
+| Single reader       | 24,671 | 38,845  | +14,174    | 100,000      |
+| Single reader cache | 24,655 | 43,230  | +18,575    | 100,000      |
+| Single writer       | 20,989 | 33,186  | +12,197    | 100,000      |
 |                     |        |         |            |              |
-| Multi reader        | 6,577  | 34,182  | +27,605    | 10 * 100,000 |
-| Multi reader cache  | 7,133  | 37,105  | +29,972    | 10 * 100,000 |
+| Multi reader        | 18,745 | 106,618 | +87,873    | 10 * 100,000 |
+| Multi reader cache  | 22,985 | 111,435 | +88,450    | 10 * 100,000 |
 |                     |        |         |            |              |
-| Many reader         | 6,403  | 34,872  | +28,469    | 20 * 100,000 |
-| Many reader cache   | 6,702  | 37,017  | +30,315    | 20 * 100,000 |
+| Many reader         | 20,787 | 102,011 | +81,224    | 20 * 100,000 |
+| Many reader cache   | 22,842 | 104,120 | +81,278    | 20 * 100,000 |
+
+# API
+
+This library includes client bindings for applications that want to use an
+Apocrypha database natively.
+
+```haskell
+type Query = [String]
+
+set    :: (ToJSON a)   => Context -> Query -> a -> IO ()
+get    :: (FromJSON a) => Context -> Query -> IO (Maybe a)
+keys   :: Context -> Query -> IO [String]
+del    :: Context -> Query -> IO ()
+pop    :: Context -> Query -> IO (Maybe String)
+append :: Context -> Query -> String -> IO ()
+```
+
+```haskell
+import Apocrypha.Client
+
+main :: IO ()
+main = do
+    keys' [] >>= mapM_ print
+
+    append' ["nested", "key"] "value"
+    value <- pop' ["nested", "key"]
+
+    case value of
+      Nothing -> putStrLn "Nothing found"
+      Just v  -> putStrLn $ "Found " <> v
+```
