@@ -17,7 +17,8 @@ import           Data.Text                (Text)
 import qualified Data.Text                as T
 import           Data.Text.Encoding       (decodeUtf8, encodeUtf8)
 import qualified Data.Vector              as V
-import           System.Directory         (doesFileExist, getHomeDirectory)
+import           System.Directory         (doesFileExist, getHomeDirectory,
+                                           renameFile)
 import           System.Info              (os)
 
 
@@ -342,8 +343,12 @@ getDB path = do
 
 
 saveDB :: FilePath -> Value -> IO ()
-saveDB path v =
-        B8.writeFile path $ encodeUtf8 $ showValue v
+-- ^ atomic write + move into place
+saveDB path v = do
+        B8.writeFile tmpFile $ encodeUtf8 $ showValue v
+        renameFile tmpFile path
+    where
+        tmpFile = path <> ".tmp"
 
 
 defaultDB :: IO String
