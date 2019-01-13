@@ -19,7 +19,7 @@ import           Data.Text.Encoding       (decodeUtf8, encodeUtf8)
 import qualified Data.Vector              as V
 import           System.Directory         (doesFileExist, getHomeDirectory,
                                            renameFile)
-import           System.Info              (os)
+import           System.FilePath.Posix    ((</>))
 
 
 type Query = [Text]
@@ -352,6 +352,4 @@ saveDB path v = do
 
 
 defaultDB :: IO String
-defaultDB
-        | os == "mingw32" = (++ "\\.db.json") <$> getHomeDirectory
-        | otherwise       = (++ "/.db.json") <$> getHomeDirectory
+defaultDB = (</> ".db.json") <$> getHomeDirectory

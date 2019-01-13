@@ -111,7 +111,8 @@ library
     vector,
     unordered-containers,
     directory,
-    binary
+    binary,
+    filepath
 
 
 test-suite database
