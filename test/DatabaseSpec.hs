@@ -4,12 +4,10 @@ module DatabaseSpec (spec) where
 
 import           Apocrypha.Database
 import           Apocrypha.Internal.Database
-
 import           Data.Aeson
 import qualified Data.HashMap.Strict         as HM
 import           Data.Text                   (Text)
 import qualified Data.Vector                 as V
-
 import           Test.Hspec
 
 

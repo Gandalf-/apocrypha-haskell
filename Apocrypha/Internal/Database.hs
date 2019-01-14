@@ -4,8 +4,8 @@ module Apocrypha.Internal.Database where
 
 import           Data.Aeson
 import qualified Data.Aeson.Encode.Pretty as P
-import qualified Data.ByteString.Char8    as B8
-import qualified Data.ByteString.Lazy     as B
+import qualified Data.ByteString.Char8    as BS
+import qualified Data.ByteString.Lazy     as BL
 import qualified Data.HashMap.Strict      as HM
 import           Data.Maybe               (fromMaybe)
 import           Data.Text                (Text)
@@ -37,7 +37,7 @@ data Context = Context
 
 -- | Presentation
 showValue :: Value -> Text
-showValue = decodeUtf8 . B.toStrict . encoder
+showValue = decodeUtf8 . BL.toStrict . encoder
     where
         encoder = P.encodePretty' config
         config = P.Config (P.Spaces 4) P.compare P.Generic False
@@ -88,7 +88,7 @@ getDB :: FilePath -> IO Value
 getDB path = do
         exists <- doesFileExist path
         if exists
-          then fromMaybe Null . decodeStrict . B8.pack <$> readFile path
+          then fromMaybe Null . decodeStrict . BS.pack <$> readFile path
           else do
                writeFile path "{}"
                getDB path
@@ -97,7 +97,7 @@ getDB path = do
 saveDB :: FilePath -> Value -> IO ()
 -- ^ atomic write + move into place
 saveDB path v = do
-        B8.writeFile tmpFile $ encodeUtf8 $ showValue v
+        BS.writeFile tmpFile $ encodeUtf8 $ showValue v
         renameFile tmpFile path
     where
         tmpFile = path <> ".tmp"

@@ -9,14 +9,12 @@ module Apocrypha.Database
 import           Apocrypha.Internal.Database
 
 import           Data.Aeson
-import qualified Data.ByteString.Char8       as B8
+import qualified Data.ByteString.Char8       as BS
 import qualified Data.HashMap.Strict         as HM
 import           Data.List                   (sort)
 import           Data.Text                   (Text)
 import qualified Data.Text                   as T
 import qualified Data.Vector                 as V
-
-
 
 
 -- | Action - core logic of the database
@@ -81,7 +79,7 @@ action (Action v _ output t c) ("--set" : values) =
             | otherwise   = decodeValue values
 
         decodeValue :: [Text] -> Maybe Value
-        decodeValue = decodeStrict . B8.pack . T.unpack . head
+        decodeValue = decodeStrict . BS.pack . T.unpack . head
 
         update :: Maybe Value -> Action
         update Nothing  = dbError v "unable to parse JSON"

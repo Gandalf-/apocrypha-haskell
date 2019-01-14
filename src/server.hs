@@ -77,10 +77,11 @@ main = do
 
         getUnixSocket :: IO Socket
         getUnixSocket = do
-            exists <- doesFileExist unixSocketPath
+            unixPath <- unixSocketPath
+            exists <- doesFileExist unixPath
             when exists $
-                removeFile unixSocketPath
-            listenOn $ UnixSocket unixSocketPath
+                removeFile unixPath
+            listenOn $ UnixSocket unixPath
 
 
 clientForker :: Socket -> Database -> WriteNeeded -> DbCache -> Options -> IO b

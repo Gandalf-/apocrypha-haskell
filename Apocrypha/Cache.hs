@@ -6,10 +6,10 @@ module Apocrypha.Cache
     , get, put
     ) where
 
+import           Apocrypha.Database  (Query)
+
 import qualified Data.HashMap.Strict as HM
 import           Data.Text           (Text)
-
-import           Apocrypha.Database  (Query)
 
 
 type Cache = HM.HashMap Query Text

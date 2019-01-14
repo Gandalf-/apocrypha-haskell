@@ -6,19 +6,19 @@ module Apocrypha.Client
     , Context, getContext, defaultContext
     ) where
 
+import           Apocrypha.Protocol
+
 import           Control.Monad         (void)
 import           Data.Aeson
-import qualified Data.ByteString.Char8 as B8
-import qualified Data.ByteString.Lazy  as B
-
-import           Apocrypha.Protocol
+import           Data.ByteString.Char8 (unpack)
+import           Data.ByteString.Lazy  (toStrict)
 
 
 -- | Keys
 
 keys :: Context -> Query -> IO [String]
 keys c items = do
-        result <- client c $ items ++ ["--keys"]
+        result <- client c $ items <> ["--keys"]
         pure $ maybe [] words result
 
 keys' :: Query -> IO [String]
@@ -30,7 +30,7 @@ keys' items =
 
 del :: Context -> Query -> IO ()
 del c items =
-        void $ client c $ items ++ ["--del"]
+        void $ client c $ items <> ["--del"]
 
 del' :: Query -> IO ()
 del' items =
@@ -41,9 +41,9 @@ del' items =
 
 set :: (ToJSON a) => Context -> Query -> a -> IO ()
 set context items value =
-        void $ client context $ items ++ ["--set", v]
+        void $ client context $ items <> ["--set", v]
     where
-        v = B8.unpack . B.toStrict . encode $ value
+        v = unpack . toStrict $ encode value
 
 set' :: (ToJSON a) => Query -> a -> IO ()
 set' items value =
@@ -54,7 +54,7 @@ set' items value =
 
 get :: (FromJSON a) => Context -> Query -> IO (Maybe a)
 get context items = do
-        result <- jClient context $ items ++ ["--edit"]
+        result <- jClient context $ items <> ["--edit"]
         pure $ case result of
             Just m  -> decode m :: (FromJSON a) => Maybe a
             Nothing -> Nothing
@@ -68,7 +68,7 @@ get' items =
 
 append :: Context -> Query -> String -> IO ()
 append context items value =
-        void $ client context $ items ++ ["+", value]
+        void $ client context $ items <> ["+", value]
 
 append' :: Query -> String -> IO ()
 append' items value =
@@ -79,7 +79,7 @@ append' items value =
 
 pop :: Context -> Query -> IO (Maybe String)
 pop context items =
-        client context $ items ++ ["--pop"]
+        client context $ items <> ["--pop"]
 
 pop' :: Query -> IO (Maybe String)
 pop' items =

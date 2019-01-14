@@ -2,19 +2,19 @@
 
 module ProtocolSpec (spec) where
 
+import           Apocrypha.Protocol
+
 import           Control.Monad
-import qualified Data.ByteString.Char8 as B8
+import qualified Data.ByteString.Char8 as BS
 import           GHC.IO.Handle.Types   (Handle)
 import           System.Directory
 import           System.IO
 import           Test.Hspec
 import           Test.QuickCheck
 
-import           Apocrypha.Protocol
 
-
-instance Arbitrary B8.ByteString where
-        arbitrary = B8.pack <$> arbitrary
+instance Arbitrary BS.ByteString where
+        arbitrary = BS.pack <$> arbitrary
 
 tmpFile :: FilePath
 tmpFile = "/tmp/apocrypha.test"
@@ -25,8 +25,8 @@ cleanUp = do
       when exists $ removeFile tmpFile
 
 
-huge :: B8.ByteString
-huge = B8.pack $ take (1024 * 1024) $ cycle ['A'..'z']
+huge :: BS.ByteString
+huge = BS.pack $ take (1024 * 1024) $ cycle ['A'..'z']
 
 
 spec :: Spec
@@ -34,14 +34,14 @@ spec = do
         describe "protocol" $
           it "encoding a message makes it longer" $
             property $ \x ->
-              B8.length (protocol x) > B8.length (x :: B8.ByteString)
+              BS.length (protocol x) > BS.length (x :: BS.ByteString)
 
         describe "protocol" $
           it "identity. read what we wrote and making sure it's the same" $
             property $ \x -> do
               cleanUp
               result <- withBinaryFile tmpFile ReadWriteMode (readWrite x)
-              result `shouldBe` Just (x :: B8.ByteString)
+              result `shouldBe` Just (x :: BS.ByteString)
 
         describe "protocol" $
           it "huge write, read. tests chunked reading and writing" $ do
@@ -60,14 +60,14 @@ resetHandle :: Handle -> IO ()
 resetHandle h = hFlush h >> hSeek h AbsoluteSeek 0
 
 
-readWrite :: B8.ByteString -> Handle -> IO (Maybe B8.ByteString)
+readWrite :: BS.ByteString -> Handle -> IO (Maybe BS.ByteString)
 readWrite bytes h = do
         protoSend h bytes
         resetHandle h
         protoRead h
 
 
-tinyReadWrite :: Handle -> IO (Maybe B8.ByteString)
+tinyReadWrite :: Handle -> IO (Maybe BS.ByteString)
 tinyReadWrite h = do
         hPutStr h "aaa"
         resetHandle h
