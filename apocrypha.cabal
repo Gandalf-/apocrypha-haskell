@@ -98,6 +98,7 @@ library
     Apocrypha.Cache
     Apocrypha.Options
 
+    Apocrypha.Internal.Database
     Apocrypha.Internal.Options
 
   default-language:    Haskell2010
@@ -127,11 +128,16 @@ test-suite database
     hspec,
     QuickCheck,
     bytestring,
-    directory
+    directory,
+    aeson,
+    text,
+    vector,
+    unordered-containers
 
   other-modules:
     ProtocolSpec
     OptionsSpec
+    DatabaseSpec
 
   build-tool-depends: hspec-discover:hspec-discover == 2.*
 
