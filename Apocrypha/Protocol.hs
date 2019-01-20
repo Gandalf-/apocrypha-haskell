@@ -1,3 +1,5 @@
+{-# LANGUAGE CPP #-}
+
 module Apocrypha.Protocol
     ( client, jClient
     , Context, getContext, defaultContext, unixSocketPath
@@ -69,10 +71,15 @@ defaultContext = do
         local = "127.0.0.1"
 
 getContext :: Either HostTCP HostUnix -> IO Context
+#ifdef mingw32_HOST_OS
+getContext (Right _) = do
+        pure Nothing
+#else
 getContext (Right (host, path)) = do
         result <- try (connectTo host $ UnixSocket path
                       ) :: HandleOrException
         pure $ eitherToMaybe result
+#endif
 
 getContext (Left (host, port)) = do
         result <- try (connectTo host $ PortNumber port

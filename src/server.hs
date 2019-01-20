@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 import           Control.Concurrent
@@ -55,7 +56,6 @@ main = do
         startup :: Value -> Options -> IO ()
         startup db options = withSocketsDo $ do
             tcpSocket  <- listenOn $ PortNumber 9999
-            unixSocket <- getUnixSocket
 
             putStrLn "Server started"
             dbMV <- newMVar db
@@ -65,16 +65,20 @@ main = do
             when (_enablePersist options) $
                 persistThread (ThreadData stdout dbMV wrMV chMV options)
 
+#ifndef mingw32_HOST_OS
+            unixSocket <- getUnixSocket
             -- listen on both sockets
             when (_enableUnix options) $
                 void . async $
                     clientForker unixSocket dbMV wrMV chMV options
+#endif
 
             clientForker tcpSocket dbMV wrMV chMV options
 
         persistThread :: ThreadData -> IO ()
         persistThread = void . async . runReaderT diskWriter
 
+#ifndef mingw32_HOST_OS
         getUnixSocket :: IO Socket
         getUnixSocket = do
             unixPath <- unixSocketPath
@@ -82,6 +86,7 @@ main = do
             when exists $
                 removeFile unixPath
             listenOn $ UnixSocket unixPath
+#endif
 
 
 clientForker :: Socket -> Database -> WriteNeeded -> DbCache -> Options -> IO b

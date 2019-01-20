@@ -48,6 +48,9 @@ executable apocrypha-server
   else
     ghc-options: -O0
 
+  if os(mingw32)
+    ghc-options: -Wno-unused-imports
+
   build-depends:
     base >= 4.7 && < 5,
     apocrypha,
