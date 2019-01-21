@@ -1,5 +1,15 @@
 {-# LANGUAGE OverloadedStrings #-}
 
+{-|
+    Module      : Apocrypha.Internal.Database
+    Description : Core database logic
+    License     : MIT
+    copyright   : 2018, Austin
+    Maintainer  : austin@anardil.net
+    Stability   : experimental
+    Portability : POSIX
+-}
+
 module Apocrypha.Internal.Database where
 
 import           Data.Aeson

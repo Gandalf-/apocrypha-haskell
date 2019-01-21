@@ -1,5 +1,14 @@
 module Apocrypha.Internal.Options where
 
+{-|
+    Module      : Apocrypha.Internal.Options
+    Description : Server command line options
+    License     : MIT
+    copyright   : 2018, Austin
+    Maintainer  : austin@anardil.net
+    Stability   : experimental
+    Portability : POSIX
+-}
 
 data Option
         = NoLogging

@@ -1,6 +1,16 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Apocrypha.Cache
+{-|
+    Module      : Apocrypha.Internal.Cache
+    Description : Simple caching primitives
+    License     : MIT
+    copyright   : 2018, Austin
+    Maintainer  : austin@anardil.net
+    Stability   : experimental
+    Portability : POSIX
+-}
+
+module Apocrypha.Internal.Cache
     ( Cache
     , emptyCache
     , get, put

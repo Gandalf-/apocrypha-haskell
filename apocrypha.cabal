@@ -5,9 +5,9 @@ description:         Please see README.md
 homepage:            https://www.anardil.net
 license:             MIT
 license-file:        LICENSE
-author:              Austin Voecks
-maintainer:          austin.voecks@gmail.com
-copyright:           2018, Austin Voecks
+author:              Austin
+maintainer:          austin@anardil.net
+copyright:           2018, Austin
 category:            Network
 build-type:          Simple
 cabal-version:       >=1.10
@@ -98,9 +98,9 @@ library
     Apocrypha.Client
     Apocrypha.Protocol
     Apocrypha.Database
-    Apocrypha.Cache
     Apocrypha.Options
 
+    Apocrypha.Internal.Cache
     Apocrypha.Internal.Database
     Apocrypha.Internal.Options
 

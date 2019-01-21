@@ -1,4 +1,4 @@
-{-# LANGUAGE CPP #-}
+{-# LANGUAGE CPP               #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 import           Control.Concurrent
@@ -16,9 +16,9 @@ import           System.Environment       (getArgs)
 import           System.Exit              (die)
 import           System.IO
 
-import           Apocrypha.Cache          (Cache, emptyCache, get, put)
 import           Apocrypha.Database       (Query, defaultDB, getDB, runAction,
                                            saveDB)
+import           Apocrypha.Internal.Cache (Cache, emptyCache, get, put)
 import           Apocrypha.Options
 import           Apocrypha.Protocol       (protoRead, protoSend, unixSocketPath)
 
