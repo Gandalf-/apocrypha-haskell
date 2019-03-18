@@ -5,12 +5,14 @@ module Apocrypha.Options
     ) where
 
 import           Apocrypha.Internal.Options
+import           Network                    (PortNumber)
 
 data Options = Options
         { _enableLog     :: Bool
         , _enableCache   :: Bool
         , _enablePersist :: Bool
         , _databasePath  :: String
+        , _tcpPort       :: PortNumber
         , _enableUnix    :: Bool
         }
     deriving (Show, Eq)
@@ -24,15 +26,16 @@ usage = unlines
         , "  --no-cache        do not using caching"
         , "  --stateless       do not save to disk"
         , "  --no-unix         do not listen on a unix domain socket"
+        , "  --tcp-port port   use an alternate tcp port"
         , "  --database path   use an alternate database"
         ]
 
 
-getOptions :: FilePath -> [String] -> Maybe Options
-getOptions defaultDbPath args
+getOptions :: FilePath -> PortNumber -> [String] -> Maybe Options
+getOptions defaultDbPath defaultTCPPort args
         | parseError = Nothing
         | otherwise  = Just $
-            Options enableLog enableCache enablePersist database enableUnix
+            Options enableLog enableCache enablePersist database tcpport enableUnix
     where
         options       = parse args
         parseError    = InvalidOption `elem` options
@@ -42,3 +45,4 @@ getOptions defaultDbPath args
         enableCache   = NoCaching `notElem` options
         enableUnix    = NoUnix    `notElem` options
         database      = chooseDB options defaultDbPath
+        tcpport       = choosePort options defaultTCPPort

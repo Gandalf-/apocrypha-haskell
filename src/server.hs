@@ -20,7 +20,8 @@ import           Apocrypha.Database       (Query, defaultDB, getDB, runAction,
                                            saveDB)
 import           Apocrypha.Internal.Cache (Cache, emptyCache, get, put)
 import           Apocrypha.Options
-import           Apocrypha.Protocol       (protoRead, protoSend, unixSocketPath)
+import           Apocrypha.Protocol       (defaultTCPPort, protoRead, protoSend,
+                                           unixSocketPath)
 
 
 type WriteNeeded = MVar Bool
@@ -42,7 +43,7 @@ main :: IO ()
 -- initial worker threads
 main = do
         defaultPath <- defaultDB
-        arguments <- getOptions defaultPath <$> getArgs
+        arguments <- getOptions defaultPath defaultTCPPort <$> getArgs
 
         case arguments of
             Nothing -> die usage
@@ -55,7 +56,7 @@ main = do
     where
         startup :: Value -> Options -> IO ()
         startup db options = withSocketsDo $ do
-            tcpSocket  <- listenOn $ PortNumber 9999
+            tcpSocket  <- listenOn $ PortNumber $ _tcpPort options
 
             putStrLn "Server started"
             dbMV <- newMVar db

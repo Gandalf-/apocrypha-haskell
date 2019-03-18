@@ -12,7 +12,7 @@
 
 module Apocrypha.Protocol
     ( client, jClient
-    , Context, getContext, defaultContext, unixSocketPath
+    , Context, getContext, defaultContext, unixSocketPath, defaultTCPPort
     , protoSend, protoRead, protocol
     , Query
     ) where
@@ -45,6 +45,9 @@ unixSocketPath :: IO String
 -- ^ Newer versions of Windows support AF_UNIX, so place nice with paths
 unixSocketPath = (</> "apocrypha.sock") <$> getTemporaryDirectory
 
+defaultTCPPort :: PortNumber
+defaultTCPPort = 9999
+
 
 client :: Context -> Query -> IO (Maybe String)
 -- ^ Make a remote query using the provided context
@@ -70,7 +73,7 @@ defaultContext = do
         unixPath <- unixSocketPath
 
         let unixSock = getContext $ Right (local, unixPath)
-            tcpSock  = getContext $ Left  (local, 9999)
+            tcpSock  = getContext $ Left  (local, defaultTCPPort)
 
         s <- unixSock
         case s of
