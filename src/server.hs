@@ -115,7 +115,9 @@ clientForker socket d w n c o = forever $ do
 
             else threadDelay tenthSecond
     where
-        forkerThread = void . async . runReaderT clientLoop
+        cacheEnabled = _enableCache o
+        logEnabled   = _enableLog o
+        forkerThread = void . async . runReaderT (clientLoop cacheEnabled logEnabled)
         maxClients   = 500
         tenthSecond  = 100000
 
@@ -134,15 +136,20 @@ diskWriter = forever $ do
         oneSecond = 1000000
 
 
-clientLoop :: ServerApp ()
+clientLoop :: Bool -> Bool -> ServerApp ()
 -- ^ read queries from the client, serve them or quit
-clientLoop =
+clientLoop cacheEnabled logEnabled =
         flip catchError (\_ -> cleanUp) $ do
               query <- getQuery
               case query of
                     Nothing  -> cleanUp
-                    (Just q) -> serve q >> clientLoop
+
+                    (Just q) -> do
+                        handle q
+                        clientLoop cacheEnabled logEnabled
     where
+        handle = serve cacheEnabled logEnabled
+
         cleanUp = do
             count <- takeMVarT =<< viewCount
             putMVarT (count - 1) =<< viewCount
@@ -154,22 +161,20 @@ getQuery :: ServerApp (Maybe ByteString)
 getQuery = viewHandle >>= liftIO . protoRead
 
 
-serve :: ByteString -> ServerApp ()
+serve :: Bool -> Bool -> ByteString -> ServerApp ()
 -- ^ Run a user query through the database, and send them the result.
 -- If the database reports that it changed, we set writeNeeded.
-serve rawQuery = do
+serve cacheEnabled logEnabled rawQuery = do
 
-        cache <- takeMVarT =<< viewCache
-        cacheEnabled <- _enableCache <$> viewOptions
+        cache <- readMVarT =<< viewCache
 
         case get cacheEnabled cache query of
 
             -- cache hit
             Just value -> do
-                putMVarT cache =<< viewCache
-
                 replyToClient value =<< viewHandle
-                logToConsole cacheHit noChange query
+                when logEnabled $
+                    logToConsole cacheHit noChange query
 
             -- cache miss, or disabled
             Nothing -> do
@@ -179,10 +184,12 @@ serve rawQuery = do
                     newCache = put cache query result
 
                 putMVarT newDB    =<< viewDatabase
+                _ <- takeMVarT =<< viewCache
                 putMVarT newCache =<< viewCache
 
                 replyToClient result =<< viewHandle
-                logToConsole cacheMiss changed query
+                when logEnabled $
+                    logToConsole cacheMiss noChange query
 
                 when changed $ do
                     setWriteNeeded
@@ -217,12 +224,9 @@ replyToClient value h = liftIO . protoSend h . encodeUtf8 $ value
 logToConsole :: Bool -> Bool -> Query -> ServerApp ()
 -- ^ write a summary of the query to stdout
 logToConsole hit write query = do
-        enableLog <- _enableLog <$> viewOptions
         count <- readMVarT =<< viewCount
-
-        when enableLog $
-            echoLocal . T.take 80 $
-                clients count <> status <> T.unwords query
+        echoLocal . T.take 80 $
+            clients count <> status <> T.unwords query
     where
         status
             | hit && write = "? "       -- this shouldn't happen
@@ -231,11 +235,12 @@ logToConsole hit write query = do
             | otherwise    = "* "       -- no hit, no write
 
         clients count
-            | count < 10  = "  "
-            | count < 50  = ". "
-            | count < 100 = "o "
-            | count < 250 = "O "
-            | otherwise   = "@ "
+            | count < 10  = " "
+            | count < 50  = "."
+            | count < 100 = "o"
+            | count < 250 = "O"
+            | count < 450 = "0"
+            | otherwise   = "!"
 
 
 -- | MVar Utilities
