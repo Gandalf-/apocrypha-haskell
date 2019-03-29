@@ -27,12 +27,14 @@ import           Apocrypha.Protocol       (defaultTCPPort, protoRead, protoSend,
 type WriteNeeded = MVar Bool
 type Database = MVar Value
 type DbCache  = MVar Cache
+type ClientCount = MVar Integer
 type ServerApp = ReaderT ThreadData IO
 
 data ThreadData = ThreadData
         { _threadHandle :: !Handle
         , _database     :: !Database
         , _writeNeeded  :: !WriteNeeded
+        , _clientCount  :: !ClientCount
         , _cache        :: !DbCache
         , _options      :: !Options
         }
@@ -62,19 +64,20 @@ main = do
             dbMV <- newMVar db
             wrMV <- newMVar False
             chMV <- newMVar emptyCache
+            ccMV <- newMVar 0
 
             when (_enablePersist options) $
-                persistThread (ThreadData stdout dbMV wrMV chMV options)
+                persistThread (ThreadData stdout dbMV wrMV ccMV chMV options)
 
 #ifndef mingw32_HOST_OS
             unixSocket <- getUnixSocket
             -- listen on both sockets
             when (_enableUnix options) $
                 void . async $
-                    clientForker unixSocket dbMV wrMV chMV options
+                    clientForker unixSocket dbMV wrMV ccMV chMV options
 #endif
 
-            clientForker tcpSocket dbMV wrMV chMV options
+            clientForker tcpSocket dbMV wrMV ccMV chMV options
 
         persistThread :: ThreadData -> IO ()
         persistThread = void . async . runReaderT diskWriter
@@ -90,14 +93,31 @@ main = do
 #endif
 
 
-clientForker :: Socket -> Database -> WriteNeeded -> DbCache -> Options -> IO b
+clientForker :: Socket
+    -> Database
+    -> WriteNeeded
+    -> ClientCount
+    -> DbCache
+    -> Options
+    -> IO b
 -- ^ listen for clients, fork off workers
-clientForker socket d w c o = forever $ do
-        (h, _, _) <- accept socket
-        hSetBuffering h NoBuffering
-        forkerThread (ThreadData h d w c o)
+clientForker socket d w n c o = forever $ do
+        count <- readMVar n
+        if count < maxClients
+            then do
+                (h, _, _) <- accept socket
+                hSetBuffering h NoBuffering
+
+                _count <- takeMVar n
+                putMVar n (_count + 1)
+
+                forkerThread (ThreadData h d w n c o)
+
+            else threadDelay tenthSecond
     where
         forkerThread = void . async . runReaderT clientLoop
+        maxClients   = 500
+        tenthSecond  = 100000
 
 
 diskWriter :: ServerApp ()
@@ -117,11 +137,16 @@ diskWriter = forever $ do
 clientLoop :: ServerApp ()
 -- ^ read queries from the client, serve them or quit
 clientLoop =
-        flip catchError (\_ -> pure ()) $ do
+        flip catchError (\_ -> cleanUp) $ do
               query <- getQuery
               case query of
-                    Nothing  -> pure ()
+                    Nothing  -> cleanUp
                     (Just q) -> serve q >> clientLoop
+    where
+        cleanUp = do
+            count <- takeMVarT =<< viewCount
+            putMVarT (count - 1) =<< viewCount
+            pure ()
 
 
 getQuery :: ServerApp (Maybe ByteString)
@@ -193,14 +218,24 @@ logToConsole :: Bool -> Bool -> Query -> ServerApp ()
 -- ^ write a summary of the query to stdout
 logToConsole hit write query = do
         enableLog <- _enableLog <$> viewOptions
+        count <- readMVarT =<< viewCount
+
         when enableLog $
-            echoLocal . T.take 80 $ status <> T.unwords query
+            echoLocal . T.take 80 $
+                clients count <> status <> T.unwords query
     where
         status
             | hit && write = "? "       -- this shouldn't happen
             | hit          = "  "
             | write        = "~ "
             | otherwise    = "* "       -- no hit, no write
+
+        clients count
+            | count < 10  = "  "
+            | count < 50  = ". "
+            | count < 100 = "o "
+            | count < 250 = "O "
+            | otherwise   = "@ "
 
 
 -- | MVar Utilities
@@ -225,6 +260,9 @@ viewDatabase = asks _database
 
 viewWrite :: ReaderT ThreadData IO WriteNeeded
 viewWrite = asks _writeNeeded
+
+viewCount :: ReaderT ThreadData IO ClientCount
+viewCount = asks _clientCount
 
 viewCache :: ReaderT ThreadData IO DbCache
 viewCache = asks _cache
