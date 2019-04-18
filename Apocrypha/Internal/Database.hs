@@ -12,15 +12,16 @@
 
 module Apocrypha.Internal.Database where
 
+import           Codec.Compression.Zlib   (compress, decompress)
+import           Control.Exception        (SomeException, evaluate, try)
 import           Data.Aeson
 import qualified Data.Aeson.Encode.Pretty as P
-import qualified Data.ByteString.Char8    as BS
 import qualified Data.ByteString.Lazy     as BL
 import qualified Data.HashMap.Strict      as HM
 import           Data.Maybe               (fromMaybe)
 import           Data.Text                (Text)
 import qualified Data.Text                as T
-import           Data.Text.Encoding       (decodeUtf8, encodeUtf8)
+import           Data.Text.Encoding       (decodeUtf8)
 import qualified Data.Vector              as V
 import           System.Directory         (doesFileExist, getHomeDirectory,
                                            renameFile)
@@ -95,21 +96,39 @@ dbError v msg =
 
 
 getDB :: FilePath -> IO Value
+-- ^ attempt to read the database
+-- if it doesn't exist, create an empty db and read that
+-- if it's compressed, decompress, otherwise read it plain
 getDB path = do
         exists <- doesFileExist path
         if exists
-          then fromMaybe Null . decodeStrict . BS.pack <$> readFile path
-          else do
-               writeFile path "{}"
-               getDB path
+          then fromMaybe Null . decode <$> safeRead
+          else saveDB path emptyDB >> getDB path
+    where
+        emptyDB :: Value
+        emptyDB = Object $ HM.fromList []
+
+        compressRead :: BL.ByteString -> IO (Either SomeException BL.ByteString)
+        compressRead b = try (evaluate $ decompress b)
+
+        safeRead :: IO BL.ByteString
+        safeRead = do
+            content <- BL.readFile path
+            result <- compressRead content
+
+            case result of
+                Left _  -> pure content
+                Right v -> pure v
 
 
 saveDB :: FilePath -> Value -> IO ()
 -- ^ atomic write + move into place
 saveDB path v = do
-        BS.writeFile tmpFile $ encodeUtf8 $ showValue v
+        BL.writeFile tmpFile $ prepare v
         renameFile tmpFile path
     where
+        prepare :: Value -> BL.ByteString
+        prepare = compress . encode
         tmpFile = path <> ".tmp"
 
 

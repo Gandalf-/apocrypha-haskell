@@ -116,7 +116,8 @@ library
     unordered-containers,
     directory,
     binary,
-    filepath
+    filepath,
+    zlib
 
 
 test-suite database

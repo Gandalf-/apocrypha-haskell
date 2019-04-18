@@ -139,7 +139,7 @@ diskWriter = forever $ do
 clientLoop :: Bool -> Bool -> ServerApp ()
 -- ^ read queries from the client, serve them or quit
 clientLoop cacheEnabled logEnabled =
-        flip catchError (\_ -> cleanUp) $ do
+        flip catchError (const cleanUp) $ do
               query <- getQuery
               case query of
                     Nothing  -> cleanUp
