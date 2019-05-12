@@ -12,23 +12,30 @@
 
 module Apocrypha.Protocol
     ( client, jClient
-    , Context, getContext, defaultContext, unixSocketPath, defaultTCPPort
+    , Context, getContext, defaultContext, unixSocketPath, defaultTCPPort, getServerlessContext
     , protoSend, protoRead, protocol
     , Query
     ) where
 
+import           Apocrypha.Database    (getDB, runAction, saveDB)
+
 import           Control.Exception     (SomeException, try)
+import           Control.Monad         (when)
 import           Data.Binary           (decode, encode)
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy  as BL
 import           Data.List             (intercalate)
+import qualified Data.Text             as T
+import           Data.Text.Encoding    (encodeUtf8)
 import           GHC.IO.Handle.Types   (Handle)
 import           Network
 import           System.Directory      (getTemporaryDirectory)
 import           System.FilePath.Posix ((</>))
 
 
-type Context = Maybe Handle
+data Context = NoConnection
+             | NetworkConnection Handle
+             | Serverless FilePath
 -- ^ Potential connection to an Apocrypha client or server
 
 type Query = [String]
@@ -49,22 +56,40 @@ defaultTCPPort :: PortNumber
 defaultTCPPort = 9999
 
 
+serverlessQuery :: FilePath -> Query -> IO T.Text
+serverlessQuery path query = do
+        db <- getDB path
+        let (result, changed, newDB) = runAction db $ map T.pack query
+
+        when changed $
+            saveDB path newDB
+
+        pure result
+
+
 client :: Context -> Query -> IO (Maybe String)
 -- ^ Make a remote query using the provided context
-client Nothing _ = pure Nothing
-client (Just c) query = do
+client NoConnection _ = pure Nothing
+
+client (NetworkConnection c) query = do
         protoSend c . BS.pack $ intercalate "\n" query
         fmap BS.unpack <$> protoRead c
+
+client (Serverless path) query =
+        Just . T.unpack <$> serverlessQuery path query
 
 
 jClient :: Context -> Query -> IO (Maybe BL.ByteString)
 -- ^ Make a remote query using the provided context, no processing is done
 -- with the result - it's handed back exactly as it's read off the socket
-jClient Nothing _ = pure Nothing
+jClient NoConnection _ = pure Nothing
 
-jClient (Just c) query = do
+jClient (NetworkConnection c) query = do
         protoSend c . BS.pack $ intercalate "\n" query
         fmap BL.fromStrict <$> protoRead c
+
+jClient (Serverless path) query =
+        Just . BL.fromStrict . encodeUtf8 <$> serverlessQuery path query
 
 
 defaultContext :: IO Context
@@ -77,27 +102,37 @@ defaultContext = do
 
         s <- unixSock
         case s of
-            (Just _) -> pure s
-            _        -> tcpSock
+            (NetworkConnection _) -> pure s
+            _                     -> tcpSock
     where
         local = "127.0.0.1"
+
+
+getServerlessContext :: FilePath -> Context
+getServerlessContext = Serverless
+
 
 getContext :: Either HostTCP HostUnix -> IO Context
 -- ^ Attempt to connect to a TCP or Unix host
 #ifdef mingw32_HOST_OS
 getContext (Right _) = do
-        pure Nothing
+        pure NoConnection
 #else
 getContext (Right (host, path)) = do
         result <- try (connectTo host $ UnixSocket path
                       ) :: HandleOrException
-        pure $ eitherToMaybe result
+        pure $ eitherToNetCon result
 #endif
 
 getContext (Left (host, port)) = do
         result <- try (connectTo host $ PortNumber port
                       ) :: HandleOrException
-        pure $ eitherToMaybe result
+        pure $ eitherToNetCon result
+
+
+eitherToNetCon :: Either a Handle -> Context
+eitherToNetCon (Left _)  = NoConnection
+eitherToNetCon (Right h) = NetworkConnection h
 
 
 protoSend :: Handle -> BS.ByteString -> IO ()
@@ -142,7 +177,3 @@ reader handle previous bytesRemaining
              this <- BS.hGetSome handle bytesRemaining
              next <- reader handle this (bytesRemaining - BS.length this)
              pure $ previous <> next
-
-eitherToMaybe :: Either a b -> Maybe b
-eitherToMaybe (Left _)  = Nothing
-eitherToMaybe (Right a) = Just a
