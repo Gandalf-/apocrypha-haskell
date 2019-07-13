@@ -61,7 +61,8 @@ executable apocrypha-server
     unordered-containers,
     bytestring,
     mtl,
-    async
+    async,
+    stm
 
 
 executable bench-apocrypha
