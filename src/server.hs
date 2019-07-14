@@ -1,33 +1,34 @@
 {-# LANGUAGE CPP               #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-import           Control.Monad.STM
 import           Control.Concurrent
+import           Control.Concurrent.Async    (async)
 import           Control.Concurrent.STM.TVar
-import           Control.Concurrent.Async (async)
 import           Control.Monad.Except
-import           Data.Aeson               (Value (..))
-import           Data.ByteString.Char8    (ByteString)
-import           Data.Text                (Text)
-import qualified Data.Text                as T
-import           Data.Text.Encoding       (decodeUtf8, encodeUtf8)
+import           Control.Monad.STM
+import           Data.Aeson                  (Value (..))
+import           Data.ByteString.Char8       (ByteString)
+import           Data.Text                   (Text)
+import qualified Data.Text                   as T
+import           Data.Text.Encoding          (decodeUtf8, encodeUtf8)
 import           Network
-import           System.Environment       (getArgs)
-import           System.Exit              (die)
+import           System.Environment          (getArgs)
+import           System.Exit                 (die)
 import           System.IO
 #ifndef mingw32_HOST_OS
-import           System.Directory         (doesFileExist, removeFile)
+import           System.Directory            (doesFileExist, removeFile)
 #endif
 
-import           Apocrypha.Database       (Query, defaultDB, getDB, runAction,
-                                           saveDB)
-import           Apocrypha.Internal.Cache (Cache, emptyCache, get, put)
+import           Apocrypha.Database          (Query, defaultDB, getDB,
+                                              runAction, saveDB)
+import           Apocrypha.Internal.Cache    (Cache, emptyCache, get, put)
 import           Apocrypha.Options
 #ifndef mingw32_HOST_OS
-import           Apocrypha.Protocol       (defaultTCPPort, protoRead, protoSend,
-                                           unixSocketPath)
+import           Apocrypha.Protocol          (defaultTCPPort, protoRead,
+                                              protoSend, unixSocketPath)
 #else
-import           Apocrypha.Protocol       (defaultTCPPort, protoRead, protoSend)
+import           Apocrypha.Protocol          (defaultTCPPort, protoRead,
+                                              protoSend)
 #endif
 
 
@@ -100,28 +101,32 @@ main = do
 #endif
 
 
-clientForker :: Socket
-    -> Database
-    -> WriteNeeded
-    -> ClientCount
-    -> DbCache
-    -> Options
+clientForker ::
+    Socket -> Database -> WriteNeeded -> ClientCount -> DbCache -> Options
     -> IO b
 -- ^ listen for clients, fork off workers
 clientForker socket d w n c o = forever $ do
+
+        -- do not accept any more clients if we're over our connection limit
         atomically $ do
             count <- readTVar n
-            when (count > maxClients) retry
+            when (count >= maxClients) retry
 
         -- accept a new client connection, set buffering, increment client total
-        (h, _, _) <- accept socket
-        hSetBuffering h NoBuffering
+        (client, _, _) <- accept socket
+        hSetBuffering client NoBuffering
         atomically $ modifyTVar n (+ 1)
 
         -- start client loop to handle queries
-        void . async . clientLoop $ ThreadData h d w n c o
+        void $ forkFinally
+            (clientLoop $ ThreadData client d w n c o)
+            (cleanup client)
     where
-        maxClients   = 500
+        cleanup client _ = do
+            hClose client
+            atomically $ modifyTVar n (\x -> x - 1)
+
+        maxClients = 1000
 
 
 diskWriter :: ThreadData -> IO ()
@@ -137,7 +142,7 @@ diskWriter (ThreadData _ d w _ _ o) = forever $ do
             saveDB path db
     where
         oneSecond = 1000000
-        path = _databasePath o
+        path = _databasePath o :: FilePath
 
 
 clientLoop :: ThreadData -> IO ()
@@ -145,19 +150,15 @@ clientLoop :: ThreadData -> IO ()
 clientLoop td = do
         query <- protoRead client
         case query of
+            -- something went wrong reading the query, exit
+            Nothing  -> pure ()
+
             (Just q) -> do
-                -- run the query through the database, reply to the client, wait for
-                -- another query
+                -- run the query through the database, try to reply to the client
                 serve td q
                 clientLoop td
-
-            Nothing  -> do
-                -- close the connection, decrement total clients
-                hClose client
-                atomically $
-                    modifyTVar (_clientCount td) (\x -> x - 1)
     where
-        client = _threadHandle td
+        client = _threadHandle td :: Handle
 
 
 serve :: ThreadData -> ByteString -> IO ()
@@ -177,11 +178,11 @@ serve (ThreadData client d w cc c o) rawQuery = do
             -- cache miss, or disabled
             Nothing -> do
                 value <- atomically $ do
-                    db <- readTVar d
 
+                    -- retrieve database, run action, place database
+                    db <- readTVar d
                     let (result, changed, newDB) = runAction db query
                         newCache = put cache query result
-
                     writeTVar d newDB
 
                     if changed
@@ -191,9 +192,11 @@ serve (ThreadData client d w cc c o) rawQuery = do
                         -- no change, just update the cache
                         else writeTVar c newCache
 
+                    -- pass back result for client
                     pure result
 
                 reply client value
+
                 when (_enableLog o) $
                     logToConsole cc cacheMiss noChange query
 
