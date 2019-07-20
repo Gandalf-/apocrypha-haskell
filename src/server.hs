@@ -4,6 +4,7 @@
 import           Control.Concurrent
 import           Control.Concurrent.Async    (async)
 import           Control.Concurrent.STM.TVar
+import           Control.Monad               (join)
 import           Control.Monad.Except
 import           Control.Monad.STM
 import           Data.Aeson                  (Value (..))
@@ -15,6 +16,7 @@ import           Network
 import           System.Environment          (getArgs)
 import           System.Exit                 (die)
 import           System.IO
+import           System.Timeout              (timeout)
 #ifndef mingw32_HOST_OS
 import           System.Directory            (doesFileExist, removeFile)
 #endif
@@ -148,17 +150,20 @@ diskWriter (ThreadData _ d w _ _ o) = forever $ do
 clientLoop :: ThreadData -> IO ()
 -- ^ read queries from the client, serve them or quit
 clientLoop td = do
-        query <- protoRead client
-        case query of
+        query <- timeout fiveMinutes $ protoRead client
+        case join query of
             -- something went wrong reading the query, exit
             Nothing  -> pure ()
-
             (Just q) -> do
                 -- run the query through the database, try to reply to the client
-                serve td q
-                clientLoop td
+                success <- timeout fiveMinutes $ serve td q
+                case success of
+                    Nothing -> pure ()
+                    _       -> clientLoop td
     where
         client = _threadHandle td :: Handle
+        fiveMinutes = 60 * 5 * oneSecond
+        oneSecond = 1000000
 
 
 serve :: ThreadData -> ByteString -> IO ()
