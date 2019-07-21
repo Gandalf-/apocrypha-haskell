@@ -23,7 +23,7 @@ import           System.Directory            (doesFileExist, removeFile)
 
 import           Apocrypha.Database          (Query, defaultDB, getDB,
                                               runAction, saveDB)
-import           Apocrypha.Internal.Cache    (Cache, emptyCache, get, put)
+import           Apocrypha.Internal.Cache    (Cache, emptyCache, cacheGet, cachePut)
 import           Apocrypha.Options
 #ifndef mingw32_HOST_OS
 import           Apocrypha.Protocol          (defaultTCPPort, protoRead,
@@ -172,40 +172,48 @@ serve :: ThreadData -> ByteString -> IO ()
 serve (ThreadData client d w cc c o) rawQuery = do
 
         cache <- readTVarIO c
-        case get (_enableCache o) cache query of
+        case cacheRead cache query of
 
             -- cache hit
             Just value -> do
                 reply client value
-                when (_enableLog o) $
-                    logToConsole cc cacheHit noChange query
+                maybeLog cc cacheHit noChange query
 
             -- cache miss, or disabled
             Nothing -> do
                 value <- atomically $ do
 
-                    -- retrieve database, run action, place database
+                    -- retrieve database, run action
                     db <- readTVar d
                     let (result, changed, newDB) = runAction db query
-                        newCache = put cache query result
-                    writeTVar d newDB
 
                     if changed
-                        -- set writeNeeded, clear the cache
-                        then writeTVar w True >> writeTVar c emptyCache
+                        -- update database, set writeNeeded, clear the cache
+                        then do
+                            writeTVar d newDB
+                            writeTVar w True
+                            writeTVar c emptyCache
 
                         -- no change, just update the cache
-                        else writeTVar c newCache
+                        else writeTVar c $ cachePut cache query result
 
                     -- pass back result for client
                     pure result
 
                 reply client value
-
-                when (_enableLog o) $
-                    logToConsole cc cacheMiss noChange query
+                maybeLog cc cacheMiss noChange query
 
     where
+        maybeLog :: ClientCount -> Bool -> Bool -> Query -> IO ()
+        maybeLog
+            | _enableLog o = logToConsole
+            | otherwise    = const . const . const . const $ pure ()
+
+        cacheRead :: Cache -> Query -> Maybe Text
+        cacheRead
+            | _enableCache o = cacheGet
+            | otherwise      = const . const Nothing
+
         query :: Query
         query = filter (not . T.null) . T.split (== '\n')
               $ decodeUtf8 rawQuery

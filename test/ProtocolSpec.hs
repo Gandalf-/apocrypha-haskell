@@ -17,10 +17,10 @@ instance Arbitrary BS.ByteString where
         arbitrary = BS.pack <$> arbitrary
 
 tmpFile :: FilePath
-tmpFile = "/tmp/apocrypha.test"
+tmpFile = "test/apocrypha-protocol.test"
 
-cleanUp :: IO ()
-cleanUp = do
+cleanup :: IO ()
+cleanup = do
       exists <- doesFileExist tmpFile
       when exists $ removeFile tmpFile
 
@@ -39,21 +39,33 @@ spec = do
         describe "protocol" $
           it "identity. read what we wrote and making sure it's the same" $
             property $ \x -> do
-              cleanUp
+              cleanup
               result <- withBinaryFile tmpFile ReadWriteMode (readWrite x)
               result `shouldBe` Just (x :: BS.ByteString)
 
         describe "protocol" $
           it "huge write, read. tests chunked reading and writing" $ do
-            cleanUp
+            cleanup
             result <- withBinaryFile tmpFile ReadWriteMode (readWrite huge)
             result `shouldBe` Just huge
 
         describe "protocol" $
           it "less than 4 bytes available" $ do
-            cleanUp
+            cleanup
             result <- withBinaryFile tmpFile ReadWriteMode tinyReadWrite
             result `shouldBe` Nothing
+
+        describe "serverless" $
+          it "can make queries" $ do
+            cleanup
+            let cx = getServerlessContext tmpFile
+            _ <- client cx ["key", "=", "value"]
+
+            result <- client cx ["key"]
+            result `shouldBe` Just "value"
+
+            result <- jClient cx ["key"]
+            result `shouldBe` Just "value"
 
 
 resetHandle :: Handle -> IO ()

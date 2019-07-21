@@ -13,7 +13,7 @@
 module Apocrypha.Internal.Cache
     ( Cache
     , emptyCache
-    , get, put
+    , cacheGet, cachePut
     ) where
 
 import           Apocrypha.Database  (Query)
@@ -23,19 +23,22 @@ import           Data.Text           (Text)
 
 
 type Cache = HM.HashMap Query Text
+-- ^ a quick lookup data structure for read queries
 
 
 emptyCache :: Cache
+-- ^ a cache with no elements
 emptyCache = HM.fromList []
 
 
-get :: Bool -> Cache -> Query -> Maybe Text
-get True cache query = HM.lookup query cache
-get False _ _        = Nothing
+cacheGet :: Cache -> Query -> Maybe Text
+-- ^ try to retrieve an element from a cache
+cacheGet cache query = HM.lookup query cache
 
 
-put :: Cache -> Query -> Text -> Cache
-put cache query value
+cachePut :: Cache -> Query -> Text -> Cache
+-- ^ place an element in the cache if it was a read query
+cachePut cache query value
         | isReadQuery query = HM.insert query value cache
         | otherwise         = cache
 
@@ -43,7 +46,6 @@ put cache query value
 -- | Internal
 
 isReadQuery :: Query -> Bool
--- ^ only read requests can be cached
 isReadQuery = not . any (`elem` writeOps)
 
 

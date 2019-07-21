@@ -7,6 +7,17 @@ module Apocrypha.Options
 import           Apocrypha.Internal.Options
 import           Network                    (PortNumber)
 
+{-|
+    Module      : Apocrypha.Options
+    Description : Server command line options
+    License     : MIT
+    copyright   : 2018, Austin
+    Maintainer  : austin@anardil.net
+    Stability   : experimental
+    Portability : POSIX
+-}
+
+-- | All options that the server understands
 data Options = Options
         { _enableLog     :: Bool
         , _enableCache   :: Bool
@@ -19,6 +30,7 @@ data Options = Options
 
 
 usage :: String
+-- ^ help text to display to the user on error or request
 usage = unlines
         [ "usage: [OPTION ...]"
         , ""
@@ -32,6 +44,7 @@ usage = unlines
 
 
 getOptions :: FilePath -> PortNumber -> [String] -> Maybe Options
+-- ^ given the default values for database path and port number, parse arguments into options
 getOptions defaultDbPath defaultTCPPort args
         | parseError = Nothing
         | otherwise  = Just $

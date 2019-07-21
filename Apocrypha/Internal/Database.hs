@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE CPP               #-}
 
 {-|
     Module      : Apocrypha.Internal.Database
@@ -23,22 +24,24 @@ import           Data.Text                (Text)
 import qualified Data.Text                as T
 import           Data.Text.Encoding       (decodeUtf8)
 import qualified Data.Vector              as V
-import           System.Directory         (doesFileExist, getHomeDirectory,
-                                           renameFile)
+import           System.Directory
 import           System.FilePath.Posix    ((</>))
 
 
+-- | items to parse into a database query
 type Query = [Text]
 
+-- | dynamic state for each level in the database
 data Action = Action
-        { _value   :: !Value
-        , _changed :: !Bool
-        , _result  :: ![Text]
-        , _top     :: !Object
-        , _context :: !Context
+        { _value   :: !Value    -- ^ The content of the database at this level
+        , _changed :: !Bool     -- ^ Has the content changed?
+        , _result  :: ![Text]   -- ^ The result of the computation, may be empty
+        , _top     :: !Object   -- ^ The top level of the database
+        , _context :: !Context  -- ^ Additional context to apply to the result
         }
     deriving (Show, Eq)
 
+-- | additional information that may be added to the result
 data Context = Context
         { _enabled :: !Bool
         , _members :: ![Text]
@@ -55,6 +58,8 @@ showValue = decodeUtf8 . BL.toStrict . encoder
 
 
 pretty :: Context -> Value -> [Text]
+-- ^ database content aware printer. returned as an array so newlines may be
+-- interspersed if needed between distinct items
 pretty _ Null = []
 pretty c (Array v) =
         [T.intercalate "\n" . concatMap (pretty c) . V.toList $ v]
@@ -81,6 +86,7 @@ addContext context value =
 
 
 baseAction :: Value -> Action
+-- ^ create the top level action to begin a query with
 baseAction db =
     case db of
         (Object o) -> Action db False [] o (Context False [])
@@ -133,4 +139,5 @@ saveDB path v = do
 
 
 defaultDB :: IO String
+-- ^ the default database location, $HOME/.db.json
 defaultDB = (</> ".db.json") <$> getHomeDirectory

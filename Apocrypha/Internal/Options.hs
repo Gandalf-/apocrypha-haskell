@@ -1,5 +1,7 @@
 module Apocrypha.Internal.Options where
 
+import           Network
+
 {-|
     Module      : Apocrypha.Internal.Options
     Description : Server command line options
@@ -10,8 +12,7 @@ module Apocrypha.Internal.Options where
     Portability : POSIX
 -}
 
-import           Network (PortNumber)
-
+-- | Types that parse can return
 data Option
         = NoLogging
         | NoCaching
@@ -39,6 +40,7 @@ choosePort (_:xs) p             = choosePort xs p
 
 
 parse :: [String] -> [Option]
+-- ^ attempt to convert string arguments into known options
 parse []                  = []
 parse ("--database":x:xs) = OtherDatabase x : parse xs
 parse ("--tcp-port":x:xs) = OtherTCPPort x : parse xs

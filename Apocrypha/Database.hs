@@ -18,10 +18,8 @@ import qualified Data.Vector                 as V
 
 
 -- | Action - core logic of the database
---
 -- queries traverse down levels of the database until they hit an action,
 -- the output and level is then mutated and passsed back up to the top
-
 action :: Action -> Query -> Action
 
 -- aliases
@@ -163,7 +161,7 @@ action (Action db@(Object _) _ output t c) ("--pop" : _)
         -- we allow popping from a dictionary only if it's empty,
         -- since that means it's new and hasn't been assigned a value
         | empty db  = Action  db False output t c
-        | otherwise = dbError db "cannot pop from a dictionary"
+        | otherwise = dbError db "this type does not support pop"
 
 -- pop - bottom
 action (Action a _ _ _ _) ("--pop" : _) =
@@ -218,7 +216,7 @@ runAction db query =
         (Action newDB changed output _ _) = action (baseAction db) query
 
         result :: Text
-        result = T.intercalate "\n" output <> "\n"
+        result = T.intercalate "\n" output
 
 
 dereference :: Action -> Query -> Action

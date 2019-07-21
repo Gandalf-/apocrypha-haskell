@@ -18,6 +18,7 @@ main = do
 
 
 bench :: IO a -> IO ()
+-- ^ time a computation, print the result to stdout
 bench f = do
         start <- getPOSIXTime
         _ <- f
@@ -43,7 +44,7 @@ testCaseMap = Map.fromList
 
 
 run :: String -> IO ()
--- look up and run a test case, otherwise show the available tests
+-- ^ look up and run a test case, otherwise show the available tests
 run test =
         fromMaybe showUsage testCase
     where
@@ -77,7 +78,7 @@ singleCount = 100000
 
 
 singleReader :: IO ()
--- read a different value each time
+-- ^ read a different value each time
 singleReader = do
         c <- defaultContext
         mapM_ (\v -> keys c [show v]) iters
@@ -94,9 +95,8 @@ singleWriter = do
         iters = [1..count] :: [Int]
         count = singleCount
 
-
 singleReaderCache :: IO ()
--- read the same value each time
+-- ^ read the same value each time
 singleReaderCache = do
         c <- defaultContext
         mapM_ (\_ -> keys c []) iters
@@ -106,6 +106,7 @@ singleReaderCache = do
 
 
 multiReader :: Int -> IO ()
+-- ^ spawn a number of single readers that hit different values
 multiReader count = do
         mapM_ (\ _ -> async singleReader) iters
         singleReader
@@ -113,6 +114,7 @@ multiReader count = do
         iters = [1..count - 1] :: [Int]
 
 multiReaderCache :: Int -> IO ()
+-- ^ spawn a number of single readers that hit the same value every time
 multiReaderCache count = do
         mapM_ (\ _ -> async singleReaderCache) iters
         singleReaderCache

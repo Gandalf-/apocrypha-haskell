@@ -53,6 +53,7 @@ unixSocketPath :: IO String
 unixSocketPath = (</> "apocrypha.sock") <$> getTemporaryDirectory
 
 defaultTCPPort :: PortNumber
+-- ^ default TCP IP port to listen on for servers, or to connect to as a client
 defaultTCPPort = 9999
 
 
@@ -109,6 +110,8 @@ defaultContext = do
 
 
 getServerlessContext :: FilePath -> Context
+-- ^ create a serverless context, where each query reads or writes from
+-- self managed database in a file
 getServerlessContext = Serverless
 
 
