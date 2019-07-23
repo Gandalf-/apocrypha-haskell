@@ -55,17 +55,16 @@ spec = do
             result <- withBinaryFile tmpFile ReadWriteMode tinyReadWrite
             result `shouldBe` Nothing
 
-        describe "serverless" $
+        describe "memoryDB" $
           it "can make queries" $ do
-            cleanup
-            let cx = getServerlessContext tmpFile
+            cx <- getMemoryContext
             _ <- client cx ["key", "=", "value"]
 
             result <- client cx ["key"]
             result `shouldBe` Just "value"
 
-            result <- jClient cx ["key"]
-            result `shouldBe` Just "value"
+            result' <- jClient cx ["key"]
+            result' `shouldBe` Just "value"
 
 
 resetHandle :: Handle -> IO ()

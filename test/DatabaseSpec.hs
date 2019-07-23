@@ -8,10 +8,8 @@ import           Apocrypha.Internal.Database
 
 import           Data.Aeson
 import qualified Data.HashMap.Strict         as HM
-import           Control.Monad
 import           Data.Text                   (Text)
 import qualified Data.Vector                 as V
-import           System.Directory
 import           Test.Hspec
 
 
@@ -96,13 +94,11 @@ spec = do
         -- assign
         describe "assign" $
             it "assign something" $ do
-                cleanup
-                let cx = getServerlessContext tmpFile
-                    value = "sauce" :: String
-                set cx ["apple"] value
-
-                result <- get cx ["apple"]
-                result `shouldBe` Just value
+                cx <- getMemoryContext
+                let v = "sauce" :: String
+                set cx ["apple"] v
+                r <- get cx ["apple"]
+                r `shouldBe` Just v
 
         describe "assign" $
             it "assign no change" $
@@ -144,9 +140,9 @@ getChanged db query = changed
         (_, changed, _) = run db query
 
 value :: Value -> Query -> Value
-value db query = value
+value db query = v
     where
-        (_, _, value) = run db query
+        (_, _, v) = run db query
 
 -- errors
 
@@ -155,14 +151,3 @@ keyTypeError = "error: cannot retrieve keys for non-dict"
 
 popTypeError :: Text
 popTypeError = "error: this type does not support pop"
-
-
--- persistence
-
-tmpFile :: FilePath
-tmpFile = "test/apocrypha.test"
-
-cleanup :: IO ()
-cleanup = do
-      exists <- doesFileExist tmpFile
-      when exists $ removeFile tmpFile

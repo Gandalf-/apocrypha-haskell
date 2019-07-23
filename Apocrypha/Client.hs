@@ -13,7 +13,7 @@
 module Apocrypha.Client
     ( keys,  get,  set,  del , pop , append
     , keys', get', set', del', pop', append'
-    , Context, getContext, defaultContext, getServerlessContext
+    , Context, getContext, defaultContext, getServerlessContext, getMemoryContext
     ) where
 
 import           Apocrypha.Protocol

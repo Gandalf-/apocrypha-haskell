@@ -111,6 +111,7 @@ library
     aeson,
     aeson-pretty,
     network,
+    stm,
     text,
     bytestring,
     vector,

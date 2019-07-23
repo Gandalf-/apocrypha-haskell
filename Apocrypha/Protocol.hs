@@ -12,30 +12,36 @@
 
 module Apocrypha.Protocol
     ( client, jClient
-    , Context, getContext, defaultContext, unixSocketPath, defaultTCPPort, getServerlessContext
+    , Context, getContext, defaultContext, getServerlessContext, getMemoryContext
+    , unixSocketPath, defaultTCPPort
     , protoSend, protoRead, protocol
     , Query
     ) where
 
-import           Apocrypha.Database    (getDB, runAction, saveDB)
+import           Apocrypha.Database          (getDB, runAction, saveDB)
 
-import           Control.Exception     (SomeException, try)
-import           Control.Monad         (when)
-import           Data.Binary           (decode, encode)
-import qualified Data.ByteString.Char8 as BS
-import qualified Data.ByteString.Lazy  as BL
-import           Data.List             (intercalate)
-import qualified Data.Text             as T
-import           Data.Text.Encoding    (encodeUtf8)
-import           GHC.IO.Handle.Types   (Handle)
+import           Control.Concurrent.STM.TVar
+import           Control.Exception           (SomeException, try)
+import           Control.Monad               (when)
+import           Control.Monad.STM           (atomically)
+import           Data.Aeson                  hiding (decode, encode)
+import           Data.Binary                 (decode, encode)
+import qualified Data.ByteString.Char8       as BS
+import qualified Data.ByteString.Lazy        as BL
+import qualified Data.HashMap.Strict         as HM
+import           Data.List                   (intercalate)
+import qualified Data.Text                   as T
+import           Data.Text.Encoding          (encodeUtf8)
+import           GHC.IO.Handle.Types         (Handle)
 import           Network
-import           System.Directory      (getTemporaryDirectory)
-import           System.FilePath.Posix ((</>))
+import           System.Directory            (getTemporaryDirectory)
+import           System.FilePath.Posix       ((</>))
 
 
 data Context = NoConnection
              | NetworkConnection Handle
              | Serverless FilePath
+             | MemoryDB (TVar Value)
 -- ^ Potential connection to an Apocrypha client or server
 
 type Query = [String]
@@ -67,6 +73,14 @@ serverlessQuery path query = do
 
         pure result
 
+memoryQuery :: TVar Value -> Query -> IO T.Text
+memoryQuery d query =
+        atomically $ do
+                db <- readTVar d
+                let (result, _, newDB) = runAction db $ map T.pack query
+                writeTVar d newDB
+                pure result
+
 
 client :: Context -> Query -> IO (Maybe String)
 -- ^ Make a remote query using the provided context
@@ -78,6 +92,9 @@ client (NetworkConnection c) query = do
 
 client (Serverless path) query =
         Just . T.unpack <$> serverlessQuery path query
+
+client (MemoryDB db) query =
+        Just . T.unpack <$> memoryQuery db query
 
 
 jClient :: Context -> Query -> IO (Maybe BL.ByteString)
@@ -91,6 +108,9 @@ jClient (NetworkConnection c) query = do
 
 jClient (Serverless path) query =
         Just . BL.fromStrict . encodeUtf8 <$> serverlessQuery path query
+
+jClient (MemoryDB db) query =
+        Just . BL.fromStrict . encodeUtf8 <$> memoryQuery db query
 
 
 defaultContext :: IO Context
@@ -113,6 +133,12 @@ getServerlessContext :: FilePath -> Context
 -- ^ create a serverless context, where each query reads or writes from
 -- self managed database in a file
 getServerlessContext = Serverless
+
+
+getMemoryContext :: IO Context
+getMemoryContext = do
+        d <- newTVarIO . Object $ HM.fromList []
+        pure $ MemoryDB d
 
 
 getContext :: Either HostTCP HostUnix -> IO Context

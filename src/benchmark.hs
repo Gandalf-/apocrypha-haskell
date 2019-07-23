@@ -77,10 +77,14 @@ singleCount :: Int
 singleCount = 100000
 
 
+benchContext :: IO Context
+benchContext = getMemoryContext
+
+
 singleReader :: IO ()
 -- ^ read a different value each time
 singleReader = do
-        c <- defaultContext
+        c <- benchContext
         mapM_ (\v -> keys c [show v]) iters
     where
         iters = [1..count] :: [Int]
@@ -89,7 +93,7 @@ singleReader = do
 singleWriter :: IO ()
 -- ^ write a different value each time
 singleWriter = do
-        c <- defaultContext
+        c <- benchContext
         mapM_ (set c ["benchmark"] . show) iters
     where
         iters = [1..count] :: [Int]
@@ -98,7 +102,7 @@ singleWriter = do
 singleReaderCache :: IO ()
 -- ^ read the same value each time
 singleReaderCache = do
-        c <- defaultContext
+        c <- benchContext
         mapM_ (\_ -> keys c []) iters
     where
         iters = [1..count] :: [Int]
