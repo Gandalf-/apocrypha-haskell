@@ -19,7 +19,7 @@ import qualified Data.Vector                 as V
 
 -- | Action - core logic of the database
 -- queries traverse down levels of the database until they hit an action,
--- the output and level is then mutated and passsed back up to the top
+-- the output and level is then mutated and passed back up to the top
 action :: Action -> Query -> Action
 
 -- aliases

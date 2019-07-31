@@ -129,10 +129,10 @@ defaultContext = do
         local = "127.0.0.1"
 
 
-getServerlessContext :: FilePath -> Context
+getServerlessContext :: FilePath -> IO Context
 -- ^ create a serverless context, where each query reads or writes from
 -- self managed database in a file
-getServerlessContext = Serverless
+getServerlessContext = pure . Serverless
 
 
 getMemoryContext :: IO Context

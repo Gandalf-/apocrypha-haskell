@@ -58,6 +58,17 @@ spec = do
         describe "memoryDB" $
           it "can make queries" $ do
             cx <- getMemoryContext
+            clientTest cx
+
+        describe "serverless" $
+          it "can make queries" $ do
+            cx <- getServerlessContext "test/test.db"
+            clientTest cx
+            removeFile "test/test.db"
+
+    where
+        clientTest :: Context -> IO ()
+        clientTest cx = do
             _ <- client cx ["key", "=", "value"]
 
             result <- client cx ["key"]
@@ -65,6 +76,7 @@ spec = do
 
             result' <- jClient cx ["key"]
             result' `shouldBe` Just "value"
+
 
 
 resetHandle :: Handle -> IO ()

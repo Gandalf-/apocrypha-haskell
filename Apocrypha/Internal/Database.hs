@@ -1,5 +1,5 @@
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE CPP               #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 {-|
     Module      : Apocrypha.Internal.Database
@@ -17,6 +17,7 @@ import           Codec.Compression.Zlib   (compress, decompress)
 import           Control.Exception        (SomeException, evaluate, try)
 import           Data.Aeson
 import qualified Data.Aeson.Encode.Pretty as P
+import qualified Data.ByteString.Char8    as BS
 import qualified Data.ByteString.Lazy     as BL
 import qualified Data.HashMap.Strict      as HM
 import           Data.Maybe               (fromMaybe)
@@ -26,6 +27,7 @@ import           Data.Text.Encoding       (decodeUtf8)
 import qualified Data.Vector              as V
 import           System.Directory
 import           System.FilePath.Posix    ((</>))
+import           System.IO                (IOMode (..), withFile)
 
 
 -- | items to parse into a database query
@@ -105,39 +107,47 @@ getDB :: FilePath -> IO Value
 -- ^ attempt to read the database
 -- if it doesn't exist, create an empty db and read that
 -- if it's compressed, decompress, otherwise read it plain
+--
+-- has to do strict IO to avoid file locking issues on Windows
 getDB path = do
         exists <- doesFileExist path
         if exists
-          then fromMaybe Null . decode <$> safeRead
+          then fromMaybe Null . decodeStrict <$> safeRead
           else saveDB path emptyDB >> getDB path
     where
-        emptyDB :: Value
-        emptyDB = Object $ HM.fromList []
-
-        compressRead :: BL.ByteString -> IO (Either SomeException BL.ByteString)
-        compressRead b = try (evaluate $ decompress b)
-
-        safeRead :: IO BL.ByteString
+        safeRead :: IO BS.ByteString
         safeRead = do
-            content <- BL.readFile path
-            result <- compressRead content
+            content <- withFile path ReadMode BS.hGetContents
+            result  <- compressRead content
 
             case result of
-                Left _  -> pure content
-                Right v -> pure v
+                -- unable to decompress the file, try to use it in raw form
+                Left _                    -> pure content
+
+                -- we were able to decompress the file, use that
+                Right decompressedContent -> pure decompressedContent
+
+        compressRead :: BS.ByteString -> IO (Either SomeException BS.ByteString)
+        compressRead b =
+            try (evaluate . BL.toStrict . decompress $ BL.fromStrict b)
 
 
 saveDB :: FilePath -> Value -> IO ()
 -- ^ atomic write + move into place
 saveDB path v = do
-        BL.writeFile tmpFile $ prepare v
+        let tmpFile = path <> ".tmp"
+        BS.writeFile tmpFile $ prepare v
         renameFile tmpFile path
     where
-        prepare :: Value -> BL.ByteString
-        prepare = compress . encode
-        tmpFile = path <> ".tmp"
+        prepare :: Value -> BS.ByteString
+        prepare = BL.toStrict . compress . encode
 
 
 defaultDB :: IO String
 -- ^ the default database location, $HOME/.db.json
 defaultDB = (</> ".db.json") <$> getHomeDirectory
+
+
+emptyDB :: Value
+-- ^ the smallest valid database
+emptyDB = Object $ HM.fromList []
