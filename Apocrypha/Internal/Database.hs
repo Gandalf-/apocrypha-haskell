@@ -135,9 +135,15 @@ getDB path = do
 saveDB :: FilePath -> Value -> IO ()
 -- ^ atomic write + move into place
 saveDB path v = do
+#ifdef mingw32_HOST_OS
+        -- windows rename -> overwrite behavior is very poor, just overwrite
+        BS.writeFile path $ prepare v
+#else
+        -- otherwise, do the right thing and atomic rename in place
         let tmpFile = path <> ".tmp"
         BS.writeFile tmpFile $ prepare v
         renameFile tmpFile path
+#endif
     where
         prepare :: Value -> BS.ByteString
         prepare = BL.toStrict . compress . encode

@@ -23,7 +23,8 @@ import           System.Directory            (doesFileExist, removeFile)
 
 import           Apocrypha.Database          (Query, defaultDB, getDB,
                                               runAction, saveDB)
-import           Apocrypha.Internal.Cache    (Cache, emptyCache, cacheGet, cachePut)
+import           Apocrypha.Internal.Cache    (Cache, cacheGet, cachePut,
+                                              emptyCache)
 import           Apocrypha.Options
 #ifndef mingw32_HOST_OS
 import           Apocrypha.Protocol          (defaultTCPPort, protoRead,

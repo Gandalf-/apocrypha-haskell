@@ -2,8 +2,8 @@
 
 module DatabaseSpec (spec) where
 
-import           Apocrypha.Database
 import           Apocrypha.Client
+import           Apocrypha.Database
 import           Apocrypha.Internal.Database
 
 import           Data.Aeson
