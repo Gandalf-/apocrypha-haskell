@@ -111,6 +111,7 @@ library
     aeson,
     aeson-pretty,
     network,
+    filelock,
     stm,
     text,
     bytestring,

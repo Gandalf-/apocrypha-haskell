@@ -26,6 +26,7 @@ import qualified Data.Text                as T
 import           Data.Text.Encoding       (decodeUtf8)
 import qualified Data.Vector              as V
 import           System.Directory
+import           System.FileLock
 import           System.FilePath.Posix    ((</>))
 import           System.IO                (IOMode (..), withFile)
 
@@ -112,8 +113,16 @@ getDB :: FilePath -> IO Value
 getDB path = do
         exists <- doesFileExist path
         if exists
-          then fromMaybe Null . decodeStrict <$> safeRead
-          else saveDB path emptyDB >> getDB path
+          then do
+            -- take a shared lock to read the database
+            lock <- lockPath
+            withFileLock lock Shared
+                (\ _ -> fromMaybe Null . decodeStrict <$> safeRead)
+
+          else do
+            -- save an empty database, then read that
+            saveDB path emptyDB
+            getDB path
     where
         safeRead :: IO BS.ByteString
         safeRead = do
@@ -135,16 +144,22 @@ getDB path = do
 saveDB :: FilePath -> Value -> IO ()
 -- ^ atomic write + move into place
 saveDB path v = do
+        lock <- lockPath
+        withFileLock lock Exclusive $
+            const saveDatabase
+    where
+        saveDatabase :: IO ()
 #ifdef mingw32_HOST_OS
-        -- windows rename -> overwrite behavior is very poor, just overwrite
-        BS.writeFile path $ prepare v
+        -- windows rename -> overwrite behavior is buggy, just overwrite
+        saveDatabase =
+            BS.writeFile path $ prepare v
 #else
         -- otherwise, do the right thing and atomic rename in place
-        let tmpFile = path <> ".tmp"
-        BS.writeFile tmpFile $ prepare v
-        renameFile tmpFile path
+        saveDatabase = do
+            let tmpFile = path <> ".tmp"
+            BS.writeFile tmpFile $ prepare v
+            renameFile tmpFile path
 #endif
-    where
         prepare :: Value -> BS.ByteString
         prepare = BL.toStrict . compress . encode
 
@@ -157,3 +172,10 @@ defaultDB = (</> ".db.json") <$> getHomeDirectory
 emptyDB :: Value
 -- ^ the smallest valid database
 emptyDB = Object $ HM.fromList []
+
+
+lockPath :: IO FilePath
+-- ^ all reads and writes share a lock. this isn't ideal if there are many
+-- separate databases on the system, but is better than cluttering up the
+-- filesystem with <path>.lock files
+lockPath = (</> "apocrypha-read-write.lock") <$> getTemporaryDirectory
