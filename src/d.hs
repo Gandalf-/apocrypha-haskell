@@ -26,4 +26,5 @@ display :: Maybe String -> IO ()
 display Nothing  = pure ()
 display (Just s)
         | null s || s == "\n" = pure ()
+        | last s /= '\n'      = putStrLn s
         | otherwise           = putStr s
