@@ -78,7 +78,8 @@ singleCount = 100000
 
 
 benchContext :: IO Context
-benchContext = getMemoryContext
+-- benchContext = getServerlessContext "db.json"
+benchContext = getHybridContext "db.json"
 
 
 singleReader :: IO ()

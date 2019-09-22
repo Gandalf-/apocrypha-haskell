@@ -12,7 +12,7 @@
 
 module Apocrypha.Protocol
     ( client, jClient
-    , Context, getContext, defaultContext, getServerlessContext, getMemoryContext
+    , Context, getContext, defaultContext, getServerlessContext, getMemoryContext, getHybridContext
     , unixSocketPath, defaultTCPPort
     , protoSend, protoRead, protocol
     , Query
@@ -38,10 +38,12 @@ import           System.Directory            (getTemporaryDirectory)
 import           System.FilePath.Posix       ((</>))
 
 
-data Context = NoConnection
-             | NetworkConnection Handle
-             | Serverless FilePath
-             | MemoryDB (TVar Value)
+data Context =
+          NoConnection
+        | NetworkConnection Handle
+        | Serverless FilePath
+        | CachingServerless FilePath (TVar Value)
+        | MemoryDB (TVar Value)
 -- ^ Potential connection to an Apocrypha client or server
 
 type Query = [String]
@@ -63,7 +65,7 @@ defaultTCPPort :: PortNumber
 defaultTCPPort = 9999
 
 
-serverlessQuery :: FilePath -> Query -> IO T.Text
+serverlessQuery :: FilePath ->  Query -> IO T.Text
 serverlessQuery path query = do
         db <- getDB path
         let (result, changed, newDB) = runAction db $ map T.pack query
@@ -76,10 +78,26 @@ serverlessQuery path query = do
 memoryQuery :: TVar Value -> Query -> IO T.Text
 memoryQuery d query =
         atomically $ do
-                db <- readTVar d
-                let (result, _, newDB) = runAction db $ map T.pack query
-                writeTVar d newDB
-                pure result
+            db <- readTVar d
+            let (result, _, newDB) = runAction db $ map T.pack query
+            writeTVar d newDB
+            pure result
+
+hybridQuery :: FilePath -> TVar Value -> Query -> IO T.Text
+-- ^ always read and write to the memory database first, and if something changed, write
+-- it out to disk too. this is safe if only a single application is accessing the
+-- persisted database
+hybridQuery path d query = do
+        (result, changed) <- atomically $ do
+            db <- readTVar d
+            let (result, changed, newDB) = runAction db $ map T.pack query
+            writeTVar d newDB
+            pure (result, changed)
+
+        when changed $
+            readTVarIO d >>= saveDB path
+
+        pure result
 
 
 client :: Context -> Query -> IO (Maybe String)
@@ -95,6 +113,9 @@ client (Serverless path) query =
 
 client (MemoryDB db) query =
         Just . T.unpack <$> memoryQuery db query
+
+client (CachingServerless path db) query =
+        Just . T.unpack <$> hybridQuery path db query
 
 
 jClient :: Context -> Query -> IO (Maybe BL.ByteString)
@@ -112,6 +133,9 @@ jClient (Serverless path) query =
 jClient (MemoryDB db) query =
         Just . BL.fromStrict . encodeUtf8 <$> memoryQuery db query
 
+jClient (CachingServerless path db) query =
+        Just . BL.fromStrict . encodeUtf8 <$> hybridQuery path db query
+
 
 defaultContext :: IO Context
 -- ^ Try to conect to the local database, prefer unix domain socket
@@ -127,6 +151,11 @@ defaultContext = do
             _                     -> tcpSock
     where
         local = "127.0.0.1"
+
+
+getHybridContext :: FilePath -> IO Context
+getHybridContext path =
+        CachingServerless path <$> (newTVarIO =<< getDB path)
 
 
 getServerlessContext :: FilePath -> IO Context
