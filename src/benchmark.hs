@@ -77,9 +77,9 @@ singleCount :: Int
 singleCount = 100000
 
 
-benchContext :: IO Context
+benchContext :: IO CachingServerless
 -- benchContext = getServerlessContext "db.json"
-benchContext = getHybridContext "db.json"
+benchContext = connectPath "db.json"
 
 
 singleReader :: IO ()

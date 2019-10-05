@@ -2,7 +2,7 @@ name:                apocrypha
 version:             0.1.1.0
 synopsis:            A lightweight, flexible JSON server and client
 description:         Please see README.md
-homepage:            https://www.anardil.net
+homepage:            https://public.anardil.net/code/apocrypha-haskell/
 license:             MIT
 license-file:        LICENSE
 author:              Austin
@@ -53,16 +53,16 @@ executable apocrypha-server
 
   build-depends:
     base >= 4.7 && < 5,
-    apocrypha,
     aeson,
-    network,
-    directory,
-    text,
-    unordered-containers,
-    bytestring,
-    mtl,
+    apocrypha,
     async,
-    stm
+    bytestring,
+    directory,
+    mtl,
+    network,
+    stm,
+    text,
+    unordered-containers
 
 
 executable bench-apocrypha
@@ -110,16 +110,16 @@ library
     base >= 4.7 && < 5,
     aeson,
     aeson-pretty,
-    network,
+    binary,
+    bytestring,
+    directory,
     filelock,
+    filepath,
+    network,
     stm,
     text,
-    bytestring,
-    vector,
     unordered-containers,
-    directory,
-    binary,
-    filepath,
+    vector,
     zlib
 
 
@@ -131,12 +131,12 @@ test-suite database
   default-language:    Haskell2010
   build-depends:
     base >= 4.7 && < 5,
+    aeson,
     apocrypha,
-    hspec,
-    QuickCheck,
     bytestring,
     directory,
-    aeson,
+    hspec,
+    QuickCheck,
     text,
     vector,
     unordered-containers

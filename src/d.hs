@@ -1,13 +1,13 @@
 module Main where
 
-import           Apocrypha.Protocol (client, defaultContext)
+import           Apocrypha.Protocol (client, connectNet, TcpConnection)
 import           System.Environment (getArgs)
 import           System.IO          (hIsTerminalDevice, stdin)
 
 
 main :: IO ()
 main = do
-        c <- defaultContext
+        c <- connectNet :: IO (Maybe TcpConnection)
         arguments >>= client c >>= display
 
 

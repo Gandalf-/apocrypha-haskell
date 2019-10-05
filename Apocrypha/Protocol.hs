@@ -12,8 +12,9 @@
 
 module Apocrypha.Protocol
     ( client, jClient
-    , Context, getContext, defaultContext, getServerlessContext, getMemoryContext, getHybridContext
+    , Context, connect, connectPath, connectNet
     , unixSocketPath, defaultTCPPort
+    , TcpConnection, Serverless, CachingServerless, MemoryDB, UnixConnection
     , protoSend, protoRead, protocol
     , Query
     ) where
@@ -38,22 +39,15 @@ import           System.Directory            (getTemporaryDirectory)
 import           System.FilePath.Posix       ((</>))
 
 
-data Context =
-          NoConnection
-        | NetworkConnection Handle
-        | Serverless FilePath
-        | CachingServerless FilePath (TVar Value)
-        | MemoryDB (TVar Value)
--- ^ Potential connection to an Apocrypha client or server
+newtype UnixConnection = UnixConnection Handle
+newtype TcpConnection  = TcpConnection Handle
+
+newtype Serverless = Serverless FilePath
+data CachingServerless = CachingServerless FilePath (TVar Value)
+newtype MemoryDB = MemoryDB (TVar Value)
 
 type Query = [String]
 -- ^ Elements of a query
-
-type HostTCP  = (String, PortNumber)
--- ^ Description of a TCP remote host
-
-type HostUnix = (String, String)
--- ^ Description of a Unix Domain socket remote host
 
 
 unixSocketPath :: IO String
@@ -65,6 +59,59 @@ defaultTCPPort :: PortNumber
 defaultTCPPort = 9999
 
 
+class Context a where
+        client  :: a -> Query -> IO (Maybe String)
+        jClient :: a -> Query -> IO (Maybe BL.ByteString)
+
+
+instance (Context a) => Context (Maybe a) where
+        client Nothing  _ = pure Nothing
+        client (Just c) q = client c q
+
+        jClient Nothing  _ = pure Nothing
+        jClient (Just c) q = jClient c q
+
+-- | Generic handle based instance, used by TcpConnection and UnixConnection
+instance Context Handle where
+        client c query = do
+                protoSend c . BS.pack $ intercalate "\n" query
+                fmap BS.unpack <$> protoRead c
+
+        jClient c query = do
+                protoSend c . BS.pack $ intercalate "\n" query
+                fmap BL.fromStrict <$> protoRead c
+
+
+instance Context TcpConnection where
+        client  t = client (getHandle t)
+        jClient t = jClient (getHandle t)
+
+
+-- | MemoryDB clients
+instance Context MemoryDB where
+        client (MemoryDB db) query =
+                Just . T.unpack <$> memoryQuery db query
+
+        jClient (MemoryDB db) query =
+                Just . BL.fromStrict . encodeUtf8 <$> memoryQuery db query
+
+memoryQuery :: TVar Value -> Query -> IO T.Text
+memoryQuery d query =
+        atomically $ do
+            db <- readTVar d
+            let (result, _, newDB) = runAction db $ map T.pack query
+            writeTVar d newDB
+            pure result
+
+
+-- | Serverless clients
+instance Context Serverless where
+        client (Serverless path) query =
+                Just . T.unpack <$> serverlessQuery path query
+
+        jClient (Serverless path) query =
+                Just . BL.fromStrict . encodeUtf8 <$> serverlessQuery path query
+
 serverlessQuery :: FilePath ->  Query -> IO T.Text
 serverlessQuery path query = do
         db <- getDB path
@@ -75,13 +122,14 @@ serverlessQuery path query = do
 
         pure result
 
-memoryQuery :: TVar Value -> Query -> IO T.Text
-memoryQuery d query =
-        atomically $ do
-            db <- readTVar d
-            let (result, _, newDB) = runAction db $ map T.pack query
-            writeTVar d newDB
-            pure result
+
+-- CachingServerless clients
+instance Context CachingServerless where
+        client (CachingServerless path db) query =
+                Just . T.unpack <$> hybridQuery path db query
+
+        jClient (CachingServerless path db) query =
+                Just . BL.fromStrict . encodeUtf8 <$> hybridQuery path db query
 
 hybridQuery :: FilePath -> TVar Value -> Query -> IO T.Text
 -- ^ always read and write to the memory database first, and if something changed, write
@@ -100,97 +148,64 @@ hybridQuery path d query = do
         pure result
 
 
-client :: Context -> Query -> IO (Maybe String)
--- ^ Make a remote query using the provided context
-client NoConnection _ = pure Nothing
+-- | File based contexts
+class (Context a) => FileConnection a where
+        connectPath :: FilePath -> IO a
 
-client (NetworkConnection c) query = do
-        protoSend c . BS.pack $ intercalate "\n" query
-        fmap BS.unpack <$> protoRead c
+instance FileConnection Serverless where
+        connectPath = pure . Serverless
 
-client (Serverless path) query =
-        Just . T.unpack <$> serverlessQuery path query
+instance FileConnection CachingServerless where
+        connectPath path =
+                CachingServerless path <$> (newTVarIO =<< getDB path)
 
-client (MemoryDB db) query =
-        Just . T.unpack <$> memoryQuery db query
+-- | Memory based contexts
+class (Context a) => Connection a where
+        connect :: IO a
 
-client (CachingServerless path db) query =
-        Just . T.unpack <$> hybridQuery path db query
+instance Connection MemoryDB where
+        connect = do
+                d <- newTVarIO . Object $ HM.fromList []
+                pure $ MemoryDB d
 
+-- | Network based contexts
+class (Context a) => NetConnection a where
+        connectNet :: IO (Maybe a)
+        getHandle  :: a -> Handle
 
-jClient :: Context -> Query -> IO (Maybe BL.ByteString)
--- ^ Make a remote query using the provided context, no processing is done
--- with the result - it's handed back exactly as it's read off the socket
-jClient NoConnection _ = pure Nothing
+instance NetConnection TcpConnection where
+        connectNet = do
+                result <- try (connectTo host $ PortNumber defaultTCPPort
+                        ) :: HandleOrException
+                case result of
+                    (Left _)  -> pure Nothing
+                    (Right h) -> pure $ Just $ TcpConnection h
+            where
+                host = "127.0.0.1"
 
-jClient (NetworkConnection c) query = do
-        protoSend c . BS.pack $ intercalate "\n" query
-        fmap BL.fromStrict <$> protoRead c
-
-jClient (Serverless path) query =
-        Just . BL.fromStrict . encodeUtf8 <$> serverlessQuery path query
-
-jClient (MemoryDB db) query =
-        Just . BL.fromStrict . encodeUtf8 <$> memoryQuery db query
-
-jClient (CachingServerless path db) query =
-        Just . BL.fromStrict . encodeUtf8 <$> hybridQuery path db query
-
-
-defaultContext :: IO Context
--- ^ Try to conect to the local database, prefer unix domain socket
-defaultContext = do
-        unixPath <- unixSocketPath
-
-        let unixSock = getContext $ Right (local, unixPath)
-            tcpSock  = getContext $ Left  (local, defaultTCPPort)
-
-        s <- unixSock
-        case s of
-            (NetworkConnection _) -> pure s
-            _                     -> tcpSock
-    where
-        local = "127.0.0.1"
+        getHandle (TcpConnection h) = h
 
 
-getHybridContext :: FilePath -> IO Context
-getHybridContext path =
-        CachingServerless path <$> (newTVarIO =<< getDB path)
+#ifndef mingw32_HOST_OS
+-- Unix instances are only implemented when we're not on Windows
 
+instance Context UnixConnection where
+        client  t = client (getHandle t)
+        jClient t = jClient (getHandle t)
 
-getServerlessContext :: FilePath -> IO Context
--- ^ create a serverless context, where each query reads or writes from
--- self managed database in a file
-getServerlessContext = pure . Serverless
+instance NetConnection UnixConnection where
+        connectNet = do
+                result <- try (connectTo host $ UnixSocket unixSocketPath
+                        ) :: HandleOrException
+                case result of
+                    (Left _)  -> pure Nothing
+                    (Right h) -> pure $ Just $ UnixConnection h
+            where
+                host = "127.0.0.1"
 
-
-getMemoryContext :: IO Context
-getMemoryContext = do
-        d <- newTVarIO . Object $ HM.fromList []
-        pure $ MemoryDB d
-
-
-getContext :: Either HostTCP HostUnix -> IO Context
--- ^ Attempt to connect to a TCP or Unix host
-#ifdef mingw32_HOST_OS
-getContext (Right _) = do
-        pure NoConnection
-#else
-getContext (Right (host, path)) = do
-        result <- try (connectTo host $ UnixSocket path
-                      ) :: HandleOrException
-        pure $ eitherToNetCon result
+        getHandle (UnixConnection h) = h
 #endif
 
-getContext (Left (host, port)) = do
-        result <- try (connectTo host $ PortNumber port
-                      ) :: HandleOrException
-        pure $ eitherToNetCon result
-
-
-eitherToNetCon :: Either a Handle -> Context
-eitherToNetCon (Left _)  = NoConnection
-eitherToNetCon (Right h) = NetworkConnection h
 
 
 protoSend :: Handle -> BS.ByteString -> IO ()
