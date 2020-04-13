@@ -12,7 +12,7 @@
 
 module Apocrypha.Protocol
     ( client, jClient
-    , Context, getContext, defaultContext, getServerlessContext, getMemoryContext, getHybridContext
+    , Context(..), getContext, defaultContext, getServerlessContext, getMemoryContext, getHybridContext
     , unixSocketPath, defaultTCPPort
     , protoSend, protoRead, protocol
     , Query

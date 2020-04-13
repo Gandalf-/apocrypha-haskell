@@ -1,5 +1,6 @@
 module Apocrypha.Internal.Options where
 
+import           Data.List.Split (splitOn)
 import           Network
 
 {-|
@@ -20,6 +21,7 @@ data Option
         | NoUnix
         | OtherDatabase String
         | OtherTCPPort String
+        | Proxy String
         | InvalidOption
     deriving (Show, Eq)
 
@@ -38,6 +40,15 @@ choosePort [] p                 = p
 choosePort (OtherTCPPort p:_) _ = read p :: PortNumber
 choosePort (_:xs) p             = choosePort xs p
 
+parseProxy :: [Option] -> PortNumber -> Maybe (String, PortNumber)
+parseProxy [] _           = Nothing
+parseProxy (Proxy uri:_) defaultTCPPort =
+    case splitOn ":" uri of
+        [host, port] -> Just (host, read port :: PortNumber)
+        [host]       -> Just (host, defaultTCPPort)
+        _            -> Nothing
+parseProxy (_:xs) p       = parseProxy xs p
+
 
 parse :: [String] -> [Option]
 -- ^ attempt to convert string arguments into known options
@@ -48,4 +59,5 @@ parse ("--no-cache":xs)   = NoCaching : parse xs
 parse ("--no-unix":xs)    = NoUnix : parse xs
 parse ("--headless":xs)   = NoLogging : parse xs
 parse ("--stateless":xs)  = NoState : parse xs
+parse ("--proxy":uri:xs)  = Proxy uri : parse xs
 parse (_:xs)              = InvalidOption : parse xs

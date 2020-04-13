@@ -1,4 +1,5 @@
 {-# LANGUAGE CPP               #-}
+{-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 import           Control.Concurrent
@@ -9,6 +10,7 @@ import           Control.Monad.Except
 import           Control.Monad.STM
 import           Data.Aeson                  (Value (..))
 import           Data.ByteString.Char8       (ByteString)
+import           Data.Maybe                  (fromJust)
 import           Data.Text                   (Text)
 import qualified Data.Text                   as T
 import           Data.Text.Encoding          (decodeUtf8, encodeUtf8)
@@ -27,11 +29,12 @@ import           Apocrypha.Internal.Cache    (Cache, cacheGet, cachePut,
                                               emptyCache)
 import           Apocrypha.Options
 #ifndef mingw32_HOST_OS
-import           Apocrypha.Protocol          (defaultTCPPort, protoRead,
-                                              protoSend, unixSocketPath)
+import           Apocrypha.Protocol          (Context (..), defaultTCPPort,
+                                              getContext, protoRead, protoSend,
+                                              unixSocketPath)
 #else
-import           Apocrypha.Protocol          (defaultTCPPort, protoRead,
-                                              protoSend)
+import           Apocrypha.Protocol          (Context (..), defaultTCPPort,
+                                              getContext, protoRead, protoSend)
 #endif
 
 
@@ -40,13 +43,20 @@ type Database = TVar Value
 type DbCache  = TVar Cache
 type ClientCount = TVar Integer
 
-data ThreadData = ThreadData
-        { _threadHandle :: !Handle
-        , _database     :: !Database
-        , _writeNeeded  :: !WriteNeeded
+data ThreadData =
+    ServerData
+        { _database    :: !Database
+        , _writeNeeded :: !WriteNeeded
+        , _clientCount :: !ClientCount
+        , _cache       :: !DbCache
+        , _options     :: !Options
+        , clientHandle :: !Handle
+        }
+    | ProxyData
+        { _options      :: !Options
         , _clientCount  :: !ClientCount
-        , _cache        :: !DbCache
-        , _options      :: !Options
+        , _remoteHandle :: !Handle
+        , clientHandle  :: !Handle
         }
 
 
@@ -58,37 +68,62 @@ main = do
         arguments <- getOptions defaultPath defaultTCPPort <$> getArgs
 
         case arguments of
-            Nothing -> die usage
+            Nothing      -> die usage
+            Just options ->
+                case _proxy options of
+                    Nothing -> serverStartup options
+                    Just _  -> proxyStartup options
 
-            Just options -> do
-                db <- (getDB $ _databasePath options) :: IO Value
-                case db of
-                    Null -> die "Could not parse database on disk"
-                    _    -> startup db options
+proxyStartup :: Options -> IO ()
+-- ^ proxy server
+proxyStartup options = withSocketsDo $ do
+        serverContext <- getContext $ Left target
+        case serverContext of
+            (NetworkConnection h) -> startup h
+            _ -> fail $ "Could not connect to server: " <> show target
+    where
+        target = fromJust $ _proxy options
+
+        startup remote = do
+            local <- listenOn $ PortNumber $ _tcpPort options
+            putStrLn "Proxy Server started"
+
+            ccMV <- newTVarIO 0           -- running client total
+            let env = ProxyData options ccMV remote
+            clientForker local env
+
+
+serverStartup :: Options -> IO ()
+-- ^ server
+serverStartup opts = do
+        db <- (getDB $ _databasePath opts) :: IO Value
+        case db of
+            Null -> die "Could not parse database on disk"
+            _    -> startup db opts
     where
         startup :: Value -> Options -> IO ()
         startup db options = withSocketsDo $ do
             tcpSocket  <- listenOn $ PortNumber $ _tcpPort options
-
             putStrLn "Server started"
+
             dbMV <- newTVarIO db          -- in memory database
             chMV <- newTVarIO emptyCache  -- in memory cache
             wrMV <- newTVarIO False       -- do we have writes to flush to disk?
             ccMV <- newTVarIO 0           -- running client total
 
-            let env = ThreadData stdout dbMV wrMV ccMV chMV options
+            let env = ServerData dbMV wrMV ccMV chMV options
             when (_enablePersist options) $
-                persistThread env
+                persistThread $ env stdout
 
 #ifndef mingw32_HOST_OS
             unixSocket <- getUnixSocket
             -- listen on both sockets
             when (_enableUnix options) $
                 void . async $
-                    clientForker unixSocket dbMV wrMV ccMV chMV options
+                    clientForker unixSocket env
 #endif
 
-            clientForker tcpSocket dbMV wrMV ccMV chMV options
+            clientForker tcpSocket env
 
         persistThread :: ThreadData -> IO ()
         persistThread = void . async . diskWriter
@@ -104,12 +139,9 @@ main = do
 #endif
 
 
-clientForker ::
-    Socket -> Database -> WriteNeeded -> ClientCount -> DbCache -> Options
-    -> IO b
+clientForker :: Socket -> (Handle -> ThreadData) -> IO b
 -- ^ listen for clients, fork off workers
-clientForker socket d w n c o = forever $ do
-
+clientForker socket env = forever $ do
         -- do not accept any more clients if we're over our connection limit
         atomically $ do
             count <- readTVar n
@@ -122,7 +154,7 @@ clientForker socket d w n c o = forever $ do
 
         -- start client loop to handle queries
         void $ forkFinally
-            (clientLoop $ ThreadData client d w n c o)
+            (clientLoop serve $ env client)
             (cleanup client)
     where
         cleanup client _ = do
@@ -130,13 +162,14 @@ clientForker socket d w n c o = forever $ do
             atomically $ modifyTVar n (\x -> x - 1)
 
         maxClients = 1000
+        n = _clientCount $ env stdout
 
 
 diskWriter :: ThreadData -> IO ()
+diskWriter ProxyData{} = fail "unsupported"
 -- ^ checks if a write to disk is necessary once per second
 -- done in a separate thread so client threads can run faster
-diskWriter (ThreadData _ d w _ _ o) = forever $ do
-
+diskWriter (ServerData d w _ _ o _) = forever $ do
         threadDelay oneSecond
         needWrite <- readTVarIO w
 
@@ -148,30 +181,46 @@ diskWriter (ThreadData _ d w _ _ o) = forever $ do
         path = _databasePath o :: FilePath
 
 
-clientLoop :: ThreadData -> IO ()
+clientLoop :: (ThreadData -> ByteString -> IO ()) -> ThreadData -> IO ()
 -- ^ read queries from the client, serve them or quit
-clientLoop td = do
+clientLoop f env = do
         query <- timeout fiveMinutes $ protoRead client
         case join query of
             -- something went wrong reading the query, exit
             Nothing  -> pure ()
             (Just q) -> do
                 -- run the query through the database, try to reply to the client
-                success <- timeout fiveMinutes $ serve td q
+                success <- timeout fiveMinutes $ f env q
                 case success of
                     Nothing -> pure ()
-                    _       -> clientLoop td
+                    _       -> clientLoop f env
     where
-        client = _threadHandle td :: Handle
+        client = clientHandle env :: Handle
         fiveMinutes = 60 * 5 * oneSecond
         oneSecond = 1000000
 
 
 serve :: ThreadData -> ByteString -> IO ()
--- ^ Run a user query through the database, and send them the result.
--- If the database reports that it changed, we set writeNeeded.
-serve (ThreadData client d w cc c o) rawQuery = do
+serve (ProxyData o cc remote client) rawQuery = do
+        protoSend remote rawQuery
+        protoRead remote >>= \case
+            Nothing -> pure ()
+            Just reply -> do
+                protoSend client reply
+                maybeLog cc True True query
+    where
+        maybeLog :: ClientCount -> Bool -> Bool -> Query -> IO ()
+        maybeLog
+            | _enableLog o = logToConsole
+            | otherwise    = const . const . const . const $ pure ()
 
+        query :: Query
+        query = filter (not . T.null) . T.split (== '\n')
+              $ decodeUtf8 rawQuery
+
+-- Run a user query through the database, and send them the result.
+-- If the database reports that it changed, we set writeNeeded.
+serve (ServerData d w cc c o client) rawQuery = do
         cache <- readTVarIO c
         case cacheRead cache query of
 

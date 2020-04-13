@@ -25,6 +25,7 @@ data Options = Options
         , _databasePath  :: String
         , _tcpPort       :: PortNumber
         , _enableUnix    :: Bool
+        , _proxy         :: Maybe (String, PortNumber)
         }
     deriving (Show, Eq)
 
@@ -34,12 +35,13 @@ usage :: String
 usage = unlines
         [ "usage: [OPTION ...]"
         , ""
-        , "  --headless        do not log to the console"
-        , "  --no-cache        do not using caching"
-        , "  --stateless       do not save to disk"
-        , "  --no-unix         do not listen on a unix domain socket"
-        , "  --tcp-port port   use an alternate tcp port"
-        , "  --database path   use an alternate database"
+        , "  --headless         do not log to the console"
+        , "  --no-cache         do not using caching"
+        , "  --stateless        do not save to disk"
+        , "  --no-unix          do not listen on a unix domain socket"
+        , "  --tcp-port port    use an alternate tcp port"
+        , "  --database path    use an alternate database"
+        , "  --proxy URI (port) act as a proxy to this server"
         ]
 
 
@@ -47,8 +49,9 @@ getOptions :: FilePath -> PortNumber -> [String] -> Maybe Options
 -- ^ given the default values for database path and port number, parse arguments into options
 getOptions defaultDbPath defaultTCPPort args
         | parseError = Nothing
-        | otherwise  = Just $
-            Options enableLog enableCache enablePersist database tcpport enableUnix
+        | otherwise  = Just $ Options
+            enableLog enableCache enablePersist
+            database tcpport enableUnix proxy
     where
         options       = parse args
         parseError    = InvalidOption `elem` options
@@ -59,3 +62,4 @@ getOptions defaultDbPath defaultTCPPort args
         enableUnix    = NoUnix    `notElem` options
         database      = chooseDB options defaultDbPath
         tcpport       = choosePort options defaultTCPPort
+        proxy         = parseProxy options defaultTCPPort

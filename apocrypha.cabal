@@ -120,6 +120,7 @@ library
     directory,
     binary,
     filepath,
+    split,
     zlib
 
 
@@ -136,6 +137,7 @@ test-suite database
     QuickCheck,
     bytestring,
     directory,
+    network,
     aeson,
     text,
     vector,
