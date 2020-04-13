@@ -45,18 +45,19 @@ type ClientCount = TVar Integer
 
 data ThreadData =
     ServerData
-        { _database    :: !Database
-        , _writeNeeded :: !WriteNeeded
-        , _clientCount :: !ClientCount
-        , _cache       :: !DbCache
-        , _options     :: !Options
-        , clientHandle :: !Handle
+        { _database     :: !Database
+        , _writeNeeded  :: !WriteNeeded
+        , _clientCount  :: !ClientCount
+        , _cache        :: !DbCache
+        , _options      :: !Options
+        , _clientHandle :: !Handle
         }
     | ProxyData
         { _options      :: !Options
         , _clientCount  :: !ClientCount
         , _remoteHandle :: !Handle
-        , clientHandle  :: !Handle
+        , _remoteLock   :: !(TVar Bool)
+        , _clientHandle :: !Handle
         }
 
 
@@ -89,8 +90,14 @@ proxyStartup options = withSocketsDo $ do
             putStrLn "Proxy Server started"
 
             ccMV <- newTVarIO 0           -- running client total
-            let env = ProxyData options ccMV remote
+            lock <- newTVarIO False
+            let env = ProxyData options ccMV remote lock
+
+            keepaliveThread $ env stdout
             clientForker local env
+
+        keepaliveThread :: ThreadData -> IO ()
+        keepaliveThread = void . async . keepAlive
 
 
 serverStartup :: Options -> IO ()
@@ -165,6 +172,20 @@ clientForker socket env = forever $ do
         n = _clientCount $ env stdout
 
 
+keepAlive :: ThreadData -> IO ()
+keepAlive ServerData{} = fail "unsupported"
+keepAlive (ProxyData _ _ remote lock _) = forever $ do
+        threadDelay threeMinutes
+        lockedIO lock pingRemote
+    where
+        pingRemote = do
+            sendReply remote "apocrypha-server-proxy-keepalive\n--keys"
+            void $ protoRead remote
+
+        threeMinutes = 3 * 60 * oneSecond
+        oneSecond = 1000000
+
+
 diskWriter :: ThreadData -> IO ()
 diskWriter ProxyData{} = fail "unsupported"
 -- ^ checks if a write to disk is necessary once per second
@@ -195,20 +216,27 @@ clientLoop f env = do
                     Nothing -> pure ()
                     _       -> clientLoop f env
     where
-        client = clientHandle env :: Handle
+        client = _clientHandle env :: Handle
         fiveMinutes = 60 * 5 * oneSecond
         oneSecond = 1000000
 
 
 serve :: ThreadData -> ByteString -> IO ()
-serve (ProxyData o cc remote client) rawQuery = do
-        protoSend remote rawQuery
-        protoRead remote >>= \case
-            Nothing -> pure ()
-            Just reply -> do
-                protoSend client reply
-                maybeLog cc True True query
+
+-- proxy serve loop, send the query to the remote, read the reply, send that to
+-- the client as the response
+serve (ProxyData o cc remote lock client) rawQuery =
+        lockedIO lock proxyLoop
     where
+        proxyLoop :: IO ()
+        proxyLoop = do
+            protoSend remote rawQuery
+            protoRead remote >>= \case
+                Nothing -> pure ()
+                Just reply -> do
+                    protoSend client reply
+                    maybeLog cc True True query
+
         maybeLog :: ClientCount -> Bool -> Bool -> Query -> IO ()
         maybeLog
             | _enableLog o = logToConsole
@@ -226,7 +254,7 @@ serve (ServerData d w cc c o client) rawQuery = do
 
             -- cache hit
             Just value -> do
-                reply client value
+                sendReply client value
                 maybeLog cc cacheHit noChange query
 
             -- cache miss, or disabled
@@ -250,7 +278,7 @@ serve (ServerData d w cc c o client) rawQuery = do
                     -- pass back result for client
                     pure result
 
-                reply client value
+                sendReply client value
                 maybeLog cc cacheMiss noChange query
 
     where
@@ -268,11 +296,11 @@ serve (ServerData d w cc c o client) rawQuery = do
         query = filter (not . T.null) . T.split (== '\n')
               $ decodeUtf8 rawQuery
 
-        reply :: Handle -> Text -> IO ()
-        reply h value = protoSend h $ encodeUtf8 value
-
         (cacheHit, cacheMiss, noChange) = (True, False, False)
 
+
+sendReply :: Handle -> Text -> IO ()
+sendReply h value = protoSend h $ encodeUtf8 value
 
 logToConsole :: ClientCount -> Bool -> Bool -> Query -> IO ()
 -- ^ write a summary of the query to stdout
@@ -294,3 +322,13 @@ logToConsole cc hit write query = do
             | count < 250 = "O"
             | count < 450 = "0"
             | otherwise   = "!"
+
+
+lockedIO :: TVar Bool -> IO () -> IO ()
+lockedIO lock f = do
+        atomically $ do
+            locked <- readTVar lock
+            when locked retry
+            writeTVar lock True
+        f
+        atomically $ writeTVar lock False
