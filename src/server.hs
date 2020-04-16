@@ -5,6 +5,7 @@
 import           Control.Concurrent
 import           Control.Concurrent.Async    (async)
 import           Control.Concurrent.STM.TVar
+import           Control.Exception           (finally)
 import           Control.Monad               (join)
 import           Control.Monad.Except
 import           Control.Monad.STM
@@ -66,23 +67,22 @@ main :: IO ()
 -- initial worker threads
 main = do
         defaultPath <- defaultDB
-        arguments <- getOptions defaultPath defaultTCPPort <$> getArgs
 
-        case arguments of
-            Nothing      -> die usage
-            Just options ->
-                case _proxy options of
-                    Nothing -> serverStartup options
-                    Just _  -> proxyStartup options
+        getOptions defaultPath defaultTCPPort <$> getArgs >>=
+            maybe (die usage) startup
+    where
+        startup options =
+            case _proxy options of
+                Nothing -> serverStartup options
+                Just _  -> proxyStartup options
 
 proxyStartup :: Options -> IO ()
 -- ^ proxy server
-proxyStartup options = withSocketsDo $ do
-        server <- proxyConnect $ fromJust $ _proxy options
-        maybe
-            (fail $ "Could not connect to server: " <> show target)
-            startup
-            server
+proxyStartup options = withSocketsDo $
+        proxyConnect (fromJust $ _proxy options) >>=
+            maybe
+                (fail $ "Could not connect to server: " <> show target)
+                startup
     where
         target = fromJust $ _proxy options
 
@@ -91,15 +91,11 @@ proxyStartup options = withSocketsDo $ do
             putStrLn "Proxy Server started"
 
             ccMV <- newTVarIO 0           -- running client total
-            lock <- newTVarIO False
-            handle <- newTVarIO remote
+            lock <- newTVarIO False       -- lock to protect our remote connection
+            handle <- newTVarIO remote    -- tvar so proxyRequest can replace it
             let env = ProxyData options ccMV handle lock
 
-            keepaliveThread $ env stdout
             clientForker local env
-
-        keepaliveThread :: ThreadData -> IO ()
-        keepaliveThread = void . async . keepAlive
 
 
 serverStartup :: Options -> IO ()
@@ -173,30 +169,10 @@ clientForker socket env = forever $ do
         maxClients = 1000
         n = _clientCount $ env stdout
 
-
-keepAlive :: ThreadData -> IO ()
-keepAlive ServerData{} = fail "unsupported"
-keepAlive d@ProxyData{} = forever $ do
-        threadDelay threeMinutes
-
-        proxyRequest d (`sendReply` "apocrypha-server-proxy-keepalive\n--keys")
-        void $ proxyRequest d protoRead
-    where
-        threeMinutes = 3 * 60 * oneSecond
-        oneSecond = 1000000
-
-proxyConnect :: (String, PortNumber) -> IO (Maybe Handle)
--- ^ attempt to connect to the target in the options, producing a raw handle
-proxyConnect target = do
-        serverContext <- getContext $ Left target
-        pure $ case serverContext of
-            (NetworkConnection h) -> Just h
-            _ -> Nothing
-
 diskWriter :: ThreadData -> IO ()
 diskWriter ProxyData{} = fail "unsupported"
--- ^ checks if a write to disk is necessary once per second
--- done in a separate thread so client threads can run faster
+-- ^ checks if a write to disk is necessary once per second done in a separate thread so
+-- client threads can run faster by not having to block on disk IO
 diskWriter (ServerData d w _ _ o _) = forever $ do
         threadDelay oneSecond
         needWrite <- readTVarIO w
@@ -205,7 +181,6 @@ diskWriter (ServerData d w _ _ o _) = forever $ do
             db <- readTVarIO d
             saveDB path db
     where
-        oneSecond = 1000000
         path = _databasePath o :: FilePath
 
 
@@ -217,7 +192,7 @@ clientLoop f env = do
             -- something went wrong reading the query, exit
             Nothing  -> pure ()
             (Just q) -> do
-                -- run the query through the database, try to reply to the client
+                -- run the query through the function, which should reply
                 success <- timeout fiveMinutes $ f env q
                 case success of
                     Nothing -> pure ()
@@ -225,20 +200,20 @@ clientLoop f env = do
     where
         client = _clientHandle env :: Handle
         fiveMinutes = 60 * 5 * oneSecond
-        oneSecond = 1000000
 
 
 serve :: ThreadData -> ByteString -> IO ()
 
 -- proxy serve loop, send the query to the remote, read the reply, send that to
--- the client as the response
+-- the client as the response. the remote connection is locked while we're making a
+-- request, but unlocked during the reply to the client
 serve d@(ProxyData o cc _ _ client) rawQuery = do
         proxyRequest d (`protoSend` rawQuery)
-        proxyRequest d protoRead >>= \case
-            Nothing -> pure ()
-            Just reply -> do
+        proxyRequest d protoRead >>= maybe
+            (pure ())
+            (\reply -> do
                 protoSend client reply
-                maybeLog cc True True query
+                maybeLog cc True True query)
     where
         maybeLog :: ClientCount -> Bool -> Bool -> Query -> IO ()
         maybeLog
@@ -303,6 +278,7 @@ serve (ServerData d w cc c o client) rawQuery = do
 
 
 sendReply :: Handle -> Text -> IO ()
+-- ^ TODO no timeout protection here
 sendReply h value = protoSend h $ encodeUtf8 value
 
 logToConsole :: ClientCount -> Bool -> Bool -> Query -> IO ()
@@ -328,20 +304,19 @@ logToConsole cc hit write query = do
 
 
 lockedIO :: TVar Bool -> IO a -> IO a
--- ^ TODO this will break if 'f' throws an exception. should use bracket instead
-lockedIO lock f = do
-        atomically $ do
+-- ^ run some IO with a lock (TVar bool)
+lockedIO lock f = finally (acquire >> f) release
+    where
+        acquire = atomically $ do
             locked <- readTVar lock
             when locked retry
             writeTVar lock True
-        out <- f
-        atomically $ writeTVar lock False
-        pure out
+        release = atomically $ writeTVar lock False
 
-handleDead :: Handle -> IO Bool
+isHandleDead :: Handle -> IO Bool
 -- ^ potentially block for 100 nanoseconds to tell if the handle is alive. it's not
 -- clear if smaller values are safe for remote connections.
-handleDead h = fromMaybe False <$> timeout 100 (hIsEOF h)
+isHandleDead h = fromMaybe False <$> timeout 100 (hIsEOF h)
 
 proxyRequest :: ThreadData -> (Handle -> IO a) -> IO a
 -- ^ wrapper around durableRequest that saves all the state back into the ThreadData for
@@ -357,25 +332,38 @@ proxyRequest d f = lockedIO lock $ do
         lock = _remoteLock d
 
 durableRequest :: Handle -> IO (Maybe Handle) -> (Handle -> IO a) -> IO (Handle, a)
--- ^ attempt to make a request given the provided handle. if the handle is dead, or the
--- request times out, the reconnect function provided is used and the request is
--- re-attempted after a delay. so, the handle returned may not be the handle provided
+-- ^ attempt to make a request given the provided handle. if the handle is dead, the
+-- reconnect function provided is used and the request is re-attempted after a delay.
+-- the handle returned may not be the handle provided
 durableRequest = work 0
     where
         work attempts h reconnect f = do
-            dead <- handleDead h
+            dead <- isHandleDead h
             if dead
                 then do
                     let next = attempts + 1
-                    putStrLn $ "reconnecting after " <> show attempts <> " seconds"
-                    threadDelay $ oneSecond * attempts
+                    putStrLn $ status attempts
+                    threadDelay $ oneSecond * (attempts * 10)
                     reconnect >>= maybe
                         (work next h reconnect f)
                         (\n -> work next n reconnect f)
                 else do
-                    -- TODO timeouts
+                    -- TODO timeouts?
                     when (attempts > 0) $ putStrLn "reconnected"
                     out <- f h
                     pure (h, out)
 
-        oneSecond = 1000000
+        status 0 = "reconnecting"
+        status n = "reconnecting after " <> show n <> " seconds"
+
+proxyConnect :: (String, PortNumber) -> IO (Maybe Handle)
+-- ^ attempt to connect to the target in the options, producing a raw handle
+proxyConnect target = do
+        serverContext <- getContext $ Left target
+        pure $ case serverContext of
+            (NetworkConnection h) -> Just h
+            _ -> Nothing
+
+oneSecond :: Int
+-- ^ nanoseconds to second
+oneSecond = 1000000

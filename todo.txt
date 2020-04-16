@@ -1,0 +1,3 @@
+break up proxy and database in server.hs
+fix record abuse in ThreadData
+proxy client timeouts
