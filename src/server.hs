@@ -10,7 +10,7 @@ import           Control.Monad.Except
 import           Control.Monad.STM
 import           Data.Aeson                  (Value (..))
 import           Data.ByteString.Char8       (ByteString)
-import           Data.Maybe                  (fromJust)
+import           Data.Maybe                  (fromJust, fromMaybe)
 import           Data.Text                   (Text)
 import qualified Data.Text                   as T
 import           Data.Text.Encoding          (decodeUtf8, encodeUtf8)
@@ -55,7 +55,7 @@ data ThreadData =
     | ProxyData
         { _options      :: !Options
         , _clientCount  :: !ClientCount
-        , _remoteHandle :: !Handle
+        , _remoteHandle :: !(TVar Handle)
         , _remoteLock   :: !(TVar Bool)
         , _clientHandle :: !Handle
         }
@@ -78,10 +78,11 @@ main = do
 proxyStartup :: Options -> IO ()
 -- ^ proxy server
 proxyStartup options = withSocketsDo $ do
-        serverContext <- getContext $ Left target
-        case serverContext of
-            (NetworkConnection h) -> startup h
-            _ -> fail $ "Could not connect to server: " <> show target
+        server <- proxyConnect $ fromJust $ _proxy options
+        maybe
+            (fail $ "Could not connect to server: " <> show target)
+            startup
+            server
     where
         target = fromJust $ _proxy options
 
@@ -91,7 +92,8 @@ proxyStartup options = withSocketsDo $ do
 
             ccMV <- newTVarIO 0           -- running client total
             lock <- newTVarIO False
-            let env = ProxyData options ccMV remote lock
+            handle <- newTVarIO remote
+            let env = ProxyData options ccMV handle lock
 
             keepaliveThread $ env stdout
             clientForker local env
@@ -174,17 +176,22 @@ clientForker socket env = forever $ do
 
 keepAlive :: ThreadData -> IO ()
 keepAlive ServerData{} = fail "unsupported"
-keepAlive (ProxyData _ _ remote lock _) = forever $ do
+keepAlive d@ProxyData{} = forever $ do
         threadDelay threeMinutes
-        lockedIO lock pingRemote
-    where
-        pingRemote = do
-            sendReply remote "apocrypha-server-proxy-keepalive\n--keys"
-            void $ protoRead remote
 
+        proxyRequest d (`sendReply` "apocrypha-server-proxy-keepalive\n--keys")
+        void $ proxyRequest d protoRead
+    where
         threeMinutes = 3 * 60 * oneSecond
         oneSecond = 1000000
 
+proxyConnect :: (String, PortNumber) -> IO (Maybe Handle)
+-- ^ attempt to connect to the target in the options, producing a raw handle
+proxyConnect target = do
+        serverContext <- getContext $ Left target
+        pure $ case serverContext of
+            (NetworkConnection h) -> Just h
+            _ -> Nothing
 
 diskWriter :: ThreadData -> IO ()
 diskWriter ProxyData{} = fail "unsupported"
@@ -225,18 +232,14 @@ serve :: ThreadData -> ByteString -> IO ()
 
 -- proxy serve loop, send the query to the remote, read the reply, send that to
 -- the client as the response
-serve (ProxyData o cc remote lock client) rawQuery =
-        lockedIO lock proxyLoop
+serve d@(ProxyData o cc _ _ client) rawQuery = do
+        proxyRequest d (`protoSend` rawQuery)
+        proxyRequest d protoRead >>= \case
+            Nothing -> pure ()
+            Just reply -> do
+                protoSend client reply
+                maybeLog cc True True query
     where
-        proxyLoop :: IO ()
-        proxyLoop = do
-            protoSend remote rawQuery
-            protoRead remote >>= \case
-                Nothing -> pure ()
-                Just reply -> do
-                    protoSend client reply
-                    maybeLog cc True True query
-
         maybeLog :: ClientCount -> Bool -> Bool -> Query -> IO ()
         maybeLog
             | _enableLog o = logToConsole
@@ -324,11 +327,55 @@ logToConsole cc hit write query = do
             | otherwise   = "!"
 
 
-lockedIO :: TVar Bool -> IO () -> IO ()
+lockedIO :: TVar Bool -> IO a -> IO a
+-- ^ TODO this will break if 'f' throws an exception. should use bracket instead
 lockedIO lock f = do
         atomically $ do
             locked <- readTVar lock
             when locked retry
             writeTVar lock True
-        f
+        out <- f
         atomically $ writeTVar lock False
+        pure out
+
+handleDead :: Handle -> IO Bool
+-- ^ potentially block for 100 nanoseconds to tell if the handle is alive. it's not
+-- clear if smaller values are safe for remote connections.
+handleDead h = fromMaybe False <$> timeout 100 (hIsEOF h)
+
+proxyRequest :: ThreadData -> (Handle -> IO a) -> IO a
+-- ^ wrapper around durableRequest that saves all the state back into the ThreadData for
+-- the proxy. this also enforces locking around the proxy's remote handle
+proxyRequest d f = lockedIO lock $ do
+        h <- readTVarIO th
+        (newH, out) <- durableRequest h reconnect f
+        atomically $ writeTVar th newH
+        pure out
+    where
+        th = _remoteHandle d
+        reconnect = proxyConnect $ fromJust $ _proxy $ _options d
+        lock = _remoteLock d
+
+durableRequest :: Handle -> IO (Maybe Handle) -> (Handle -> IO a) -> IO (Handle, a)
+-- ^ attempt to make a request given the provided handle. if the handle is dead, or the
+-- request times out, the reconnect function provided is used and the request is
+-- re-attempted after a delay. so, the handle returned may not be the handle provided
+durableRequest = work 0
+    where
+        work attempts h reconnect f = do
+            dead <- handleDead h
+            if dead
+                then do
+                    let next = attempts + 1
+                    putStrLn $ "reconnecting after " <> show attempts <> " seconds"
+                    threadDelay $ oneSecond * attempts
+                    reconnect >>= maybe
+                        (work next h reconnect f)
+                        (\n -> work next n reconnect f)
+                else do
+                    -- TODO timeouts
+                    when (attempts > 0) $ putStrLn "reconnected"
+                    out <- f h
+                    pure (h, out)
+
+        oneSecond = 1000000
