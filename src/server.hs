@@ -1,5 +1,4 @@
 {-# LANGUAGE CPP               #-}
-{-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 import           Control.Concurrent
@@ -11,7 +10,7 @@ import           Control.Monad.Except
 import           Control.Monad.STM
 import           Data.Aeson                  (Value (..))
 import           Data.ByteString.Char8       (ByteString)
-import           Data.Maybe                  (fromJust, fromMaybe)
+import           Data.Maybe                  (fromMaybe)
 import           Data.Text                   (Text)
 import qualified Data.Text                   as T
 import           Data.Text.Encoding          (decodeUtf8, encodeUtf8)
@@ -38,28 +37,30 @@ import           Apocrypha.Protocol          (Context (..), defaultTCPPort,
                                               getContext, protoRead, protoSend)
 #endif
 
-
-type WriteNeeded = TVar Bool
-type Database = TVar Value
-type DbCache  = TVar Cache
 type ClientCount = TVar Integer
 
-data ThreadData =
-    ServerData
-        { _database     :: !Database
-        , _writeNeeded  :: !WriteNeeded
-        , _clientCount  :: !ClientCount
-        , _cache        :: !DbCache
-        , _options      :: !Options
-        , _clientHandle :: !Handle
-        }
-    | ProxyData
-        { _options      :: !Options
-        , _clientCount  :: !ClientCount
-        , _remoteHandle :: !(TVar Handle)
-        , _remoteLock   :: !(TVar Bool)
-        , _clientHandle :: !Handle
-        }
+class Server a where
+    logEnabled   :: a -> Bool
+    clientCount  :: a -> ClientCount
+    clientHandle :: a -> Handle
+    serve        :: a -> ByteString -> IO ()
+
+data Database = Database
+    { _database           :: !(TVar Value)
+    , _writeNeeded        :: !(TVar Bool)
+    , _serverClientCount  :: !ClientCount
+    , _cache              :: !(TVar Cache)
+    , _serverOptions      :: !DatabaseOptions
+    , _serverClientHandle :: !Handle
+    }
+
+data Proxy = Proxy
+    { _proxyOptions      :: !ProxyOptions
+    , _proxyClientCount  :: !ClientCount
+    , _remoteHandle      :: !(TVar Handle)
+    , _remoteLock        :: !(TVar Bool)
+    , _proxyClientHandle :: !Handle
+    }
 
 
 main :: IO ()
@@ -68,47 +69,42 @@ main :: IO ()
 main = do
         defaultPath <- defaultDB
 
-        getOptions defaultPath defaultTCPPort <$> getArgs >>=
-            maybe (die usage) startup
-    where
-        startup options =
-            case _proxy options of
-                Nothing -> serverStartup options
-                Just _  -> proxyStartup options
+        parseOptions defaultPath defaultTCPPort <$> getArgs >>=
+            maybe
+                (die usage)
+                (either databaseStartup proxyStartup)
 
-proxyStartup :: Options -> IO ()
+proxyStartup :: ProxyOptions -> IO ()
 -- ^ proxy server
 proxyStartup options = withSocketsDo $
-        proxyConnect (fromJust $ _proxy options) >>=
-            maybe
-                (fail $ "Could not connect to server: " <> show target)
-                startup
+        remoteConnect target >>= maybe
+            (fail $ "Could not connect to server: " <> show target)
+            startup
     where
-        target = fromJust $ _proxy options
+        target = _proxyTarget options
 
         startup remote = do
-            local <- listenOn $ PortNumber $ _tcpPort options
+            local <- listenOn $ PortNumber $ tcpPort options
             putStrLn "Proxy Server started"
 
             ccMV <- newTVarIO 0           -- running client total
             lock <- newTVarIO False       -- lock to protect our remote connection
             handle <- newTVarIO remote    -- tvar so proxyRequest can replace it
-            let env = ProxyData options ccMV handle lock
+            let env = Proxy options ccMV handle lock
 
             clientForker local env
 
-
-serverStartup :: Options -> IO ()
--- ^ server
-serverStartup opts = do
-        db <- (getDB $ _databasePath opts) :: IO Value
+databaseStartup :: DatabaseOptions -> IO ()
+-- ^ database server
+databaseStartup opts = do
+        db <- (getDB $ _dbPath opts) :: IO Value
         case db of
             Null -> die "Could not parse database on disk"
             _    -> startup db opts
     where
-        startup :: Value -> Options -> IO ()
+        startup :: Value -> DatabaseOptions -> IO ()
         startup db options = withSocketsDo $ do
-            tcpSocket  <- listenOn $ PortNumber $ _tcpPort options
+            tcpSocket  <- listenOn $ PortNumber $ tcpPort options
             putStrLn "Server started"
 
             dbMV <- newTVarIO db          -- in memory database
@@ -116,21 +112,21 @@ serverStartup opts = do
             wrMV <- newTVarIO False       -- do we have writes to flush to disk?
             ccMV <- newTVarIO 0           -- running client total
 
-            let env = ServerData dbMV wrMV ccMV chMV options
-            when (_enablePersist options) $
+            let env = Database dbMV wrMV ccMV chMV options
+            when (_dbEnablePersist options) $
                 persistThread $ env stdout
 
 #ifndef mingw32_HOST_OS
             unixSocket <- getUnixSocket
             -- listen on both sockets
-            when (_enableUnix options) $
+            when (_dbEnableUnix options) $
                 void . async $
                     clientForker unixSocket env
 #endif
 
             clientForker tcpSocket env
 
-        persistThread :: ThreadData -> IO ()
+        persistThread :: Database -> IO ()
         persistThread = void . async . diskWriter
 
 #ifndef mingw32_HOST_OS
@@ -143,8 +139,81 @@ serverStartup opts = do
             listenOn $ UnixSocket unixPath
 #endif
 
+instance Server Database where
+    logEnabled   = headless . _serverOptions
+    clientCount  = _serverClientCount
+    clientHandle = _serverClientHandle
 
-clientForker :: Socket -> (Handle -> ThreadData) -> IO b
+    -- Run a user query through the database, and send them the result.
+    -- If the database reports that it changed, we set writeNeeded.
+    serve s@(Database d w _ c o client) rawQuery = do
+            cache <- readTVarIO c
+            case cacheRead cache query of
+                -- cache hit
+                Just value -> do
+                    sendReply client value
+                    maybeLog s cacheHit noChange query
+
+                -- cache miss, or disabled
+                Nothing -> do
+                    runQuery cache >>= sendReply client
+                    maybeLog s cacheMiss noChange query
+        where
+            runQuery :: Cache -> IO Text
+            runQuery cache = atomically $ do
+                -- retrieve database, run action
+                db <- readTVar d
+                let (result, changed, newDB) = runAction db query
+
+                if changed
+                    -- update database, set writeNeeded, clear the cache
+                    then do
+                        writeTVar d newDB
+                        writeTVar w True
+                        writeTVar c emptyCache
+
+                    -- no change, just update the cache
+                    else writeTVar c $ cachePut cache query result
+
+                -- pass back result for client
+                pure result
+
+            cacheRead :: Cache -> Query -> Maybe Text
+            cacheRead
+                | _dbEnableCache o = cacheGet
+                | otherwise        = const . const Nothing
+
+            query :: Query
+            query = filter (not . T.null) . T.split (== '\n')
+                $ decodeUtf8 rawQuery
+
+            (cacheHit, cacheMiss, noChange) = (True, False, False)
+
+instance Server Proxy where
+    logEnabled   = headless . _proxyOptions
+    clientCount  = _proxyClientCount
+    clientHandle = _proxyClientHandle
+
+    -- proxy serve loop, send the query to the remote, read the reply, send that to the
+    -- client as the response. the remote connection is locked while we're making a
+    -- request, but unlocked during the reply to the client
+    serve s rawQuery = do
+            proxyRequest s (`protoSend` rawQuery)
+            proxyRequest s protoRead >>= maybe
+                (pure ())
+                (\reply -> do
+                    protoSend client reply
+                    maybeLog s True True query)
+        where
+            client = clientHandle s
+            query :: Query
+            query = filter (not . T.null) . T.split (== '\n')
+                $ decodeUtf8 rawQuery
+
+
+-- | Server utilities
+
+clientForker :: Server a => Socket -> (Handle -> a) -> IO b
 -- ^ listen for clients, fork off workers
 clientForker socket env = forever $ do
         -- do not accept any more clients if we're over our connection limit
@@ -167,24 +236,9 @@ clientForker socket env = forever $ do
             atomically $ modifyTVar n (\x -> x - 1)
 
         maxClients = 1000
-        n = _clientCount $ env stdout
+        n = clientCount $ env stdout
 
-diskWriter :: ThreadData -> IO ()
-diskWriter ProxyData{} = fail "unsupported"
--- ^ checks if a write to disk is necessary once per second done in a separate thread so
--- client threads can run faster by not having to block on disk IO
-diskWriter (ServerData d w _ _ o _) = forever $ do
-        threadDelay oneSecond
-        needWrite <- readTVarIO w
-
-        when needWrite $ do
-            db <- readTVarIO d
-            saveDB path db
-    where
-        path = _databasePath o :: FilePath
-
-
-clientLoop :: (ThreadData -> ByteString -> IO ()) -> ThreadData -> IO ()
+clientLoop :: Server a => (a -> ByteString -> IO ()) -> a -> IO ()
 -- ^ read queries from the client, serve them or quit
 clientLoop f env = do
         query <- timeout fiveMinutes $ protoRead client
@@ -198,95 +252,16 @@ clientLoop f env = do
                     Nothing -> pure ()
                     _       -> clientLoop f env
     where
-        client = _clientHandle env :: Handle
+        client = clientHandle env :: Handle
         fiveMinutes = 60 * 5 * oneSecond
 
-
-serve :: ThreadData -> ByteString -> IO ()
-
--- proxy serve loop, send the query to the remote, read the reply, send that to
--- the client as the response. the remote connection is locked while we're making a
--- request, but unlocked during the reply to the client
-serve d@(ProxyData o cc _ _ client) rawQuery = do
-        proxyRequest d (`protoSend` rawQuery)
-        proxyRequest d protoRead >>= maybe
-            (pure ())
-            (\reply -> do
-                protoSend client reply
-                maybeLog cc True True query)
-    where
-        maybeLog :: ClientCount -> Bool -> Bool -> Query -> IO ()
-        maybeLog
-            | _enableLog o = logToConsole
-            | otherwise    = const . const . const . const $ pure ()
-
-        query :: Query
-        query = filter (not . T.null) . T.split (== '\n')
-              $ decodeUtf8 rawQuery
-
--- Run a user query through the database, and send them the result.
--- If the database reports that it changed, we set writeNeeded.
-serve (ServerData d w cc c o client) rawQuery = do
-        cache <- readTVarIO c
-        case cacheRead cache query of
-
-            -- cache hit
-            Just value -> do
-                sendReply client value
-                maybeLog cc cacheHit noChange query
-
-            -- cache miss, or disabled
-            Nothing -> do
-                value <- atomically $ do
-
-                    -- retrieve database, run action
-                    db <- readTVar d
-                    let (result, changed, newDB) = runAction db query
-
-                    if changed
-                        -- update database, set writeNeeded, clear the cache
-                        then do
-                            writeTVar d newDB
-                            writeTVar w True
-                            writeTVar c emptyCache
-
-                        -- no change, just update the cache
-                        else writeTVar c $ cachePut cache query result
-
-                    -- pass back result for client
-                    pure result
-
-                sendReply client value
-                maybeLog cc cacheMiss noChange query
-
-    where
-        maybeLog :: ClientCount -> Bool -> Bool -> Query -> IO ()
-        maybeLog
-            | _enableLog o = logToConsole
-            | otherwise    = const . const . const . const $ pure ()
-
-        cacheRead :: Cache -> Query -> Maybe Text
-        cacheRead
-            | _enableCache o = cacheGet
-            | otherwise      = const . const Nothing
-
-        query :: Query
-        query = filter (not . T.null) . T.split (== '\n')
-              $ decodeUtf8 rawQuery
-
-        (cacheHit, cacheMiss, noChange) = (True, False, False)
-
-
-sendReply :: Handle -> Text -> IO ()
--- ^ TODO no timeout protection here
-sendReply h value = protoSend h $ encodeUtf8 value
-
-logToConsole :: ClientCount -> Bool -> Bool -> Query -> IO ()
+maybeLog :: Server a => a -> Bool -> Bool -> Query -> IO ()
 -- ^ write a summary of the query to stdout
-logToConsole cc hit write query = do
-        count <- readTVarIO cc
-        putStrLn . T.unpack . T.take 80 $
-            clients count <> status <> T.unwords query
+maybeLog s hit write query =
+        when (logEnabled s) $ do
+            count <- readTVarIO $ clientCount s
+            putStrLn . T.unpack . T.take 80 $
+                clients count <> status <> T.unwords query
     where
         status
             | hit && write = "? "       -- this shouldn't happen
@@ -303,22 +278,9 @@ logToConsole cc hit write query = do
             | otherwise   = "!"
 
 
-lockedIO :: TVar Bool -> IO a -> IO a
--- ^ run some IO with a lock (TVar bool)
-lockedIO lock f = finally (acquire >> f) release
-    where
-        acquire = atomically $ do
-            locked <- readTVar lock
-            when locked retry
-            writeTVar lock True
-        release = atomically $ writeTVar lock False
+-- | Proxy utilities
 
-isHandleDead :: Handle -> IO Bool
--- ^ potentially block for 100 nanoseconds to tell if the handle is alive. it's not
--- clear if smaller values are safe for remote connections.
-isHandleDead h = fromMaybe False <$> timeout 100 (hIsEOF h)
-
-proxyRequest :: ThreadData -> (Handle -> IO a) -> IO a
+proxyRequest :: Proxy -> (Handle -> IO a) -> IO a
 -- ^ wrapper around durableRequest that saves all the state back into the ThreadData for
 -- the proxy. this also enforces locking around the proxy's remote handle
 proxyRequest d f = lockedIO lock $ do
@@ -328,8 +290,36 @@ proxyRequest d f = lockedIO lock $ do
         pure out
     where
         th = _remoteHandle d
-        reconnect = proxyConnect $ fromJust $ _proxy $ _options d
+        reconnect = remoteConnect $ _proxyTarget $ _proxyOptions d
         lock = _remoteLock d
+
+
+-- | Database utiltiies
+
+diskWriter :: Database -> IO ()
+-- ^ checks if a write to disk is necessary once per second done in a separate thread so
+-- client threads can run faster by not having to block on disk IO
+diskWriter (Database d w _ _ o _) = forever $ do
+        threadDelay oneSecond
+        needWrite <- readTVarIO w
+
+        when needWrite $ do
+            db <- readTVarIO d
+            saveDB path db
+    where
+        path = _dbPath o :: FilePath
+
+
+-- | General utilities
+
+oneSecond :: Int
+-- ^ nanoseconds to second
+oneSecond = 1000000
+
+isHandleDead :: Handle -> IO Bool
+-- ^ potentially block for 100 nanoseconds to tell if the handle is alive. it's not
+-- clear if smaller values are safe for remote connections.
+isHandleDead h = fromMaybe False <$> timeout 100 (hIsEOF h)
 
 durableRequest :: Handle -> IO (Maybe Handle) -> (Handle -> IO a) -> IO (Handle, a)
 -- ^ attempt to make a request given the provided handle. if the handle is dead, the
@@ -341,29 +331,39 @@ durableRequest = work 0
             dead <- isHandleDead h
             if dead
                 then do
-                    let next = attempts + 1
-                    putStrLn $ status attempts
-                    threadDelay $ oneSecond * (attempts * 10)
+                    let next  = attempts + 1
+                        delay = attempts * 10
+
+                    when (attempts > 0) $
+                        putStrLn $ "reconnecting after " <> show delay <> " seconds"
+
+                    threadDelay $ oneSecond * delay
                     reconnect >>= maybe
                         (work next h reconnect f)
                         (\n -> work next n reconnect f)
                 else do
-                    -- TODO timeouts?
-                    when (attempts > 0) $ putStrLn "reconnected"
+                    when (attempts > 1) $ putStrLn "reconnected"
                     out <- f h
                     pure (h, out)
 
-        status 0 = "reconnecting"
-        status n = "reconnecting after " <> show n <> " seconds"
+lockedIO :: TVar Bool -> IO a -> IO a
+-- ^ run some IO with a lock (TVar bool)
+lockedIO lock f = finally (acquire >> f) release
+    where
+        acquire = atomically $ do
+            locked <- readTVar lock
+            when locked retry
+            writeTVar lock True
+        release = atomically $ writeTVar lock False
 
-proxyConnect :: (String, PortNumber) -> IO (Maybe Handle)
+sendReply :: Handle -> Text -> IO ()
+-- ^ TODO no timeout protection here
+sendReply h value = protoSend h $ encodeUtf8 value
+
+remoteConnect :: (String, PortNumber) -> IO (Maybe Handle)
 -- ^ attempt to connect to the target in the options, producing a raw handle
-proxyConnect target = do
+remoteConnect target = do
         serverContext <- getContext $ Left target
         pure $ case serverContext of
             (NetworkConnection h) -> Just h
-            _ -> Nothing
-
-oneSecond :: Int
--- ^ nanoseconds to second
-oneSecond = 1000000
+            _                     -> Nothing
