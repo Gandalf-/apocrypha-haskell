@@ -8,7 +8,6 @@ import           Control.Exception           (finally)
 import           Control.Monad               (join)
 import           Control.Monad.Except
 import           Control.Monad.STM
-import           Data.Aeson                  (Value (..))
 import           Data.ByteString.Char8       (ByteString)
 import           Data.Maybe                  (fromMaybe)
 import           Data.Text                   (Text)
@@ -23,8 +22,7 @@ import           System.Timeout              (timeout)
 import           System.Directory            (doesFileExist, removeFile)
 #endif
 
-import           Apocrypha.Database          (Query, defaultDB, getDB,
-                                              runAction, saveDB)
+import           Apocrypha.Database
 import           Apocrypha.Internal.Cache    (Cache, cacheGet, cachePut,
                                               emptyCache)
 import           Apocrypha.Options
@@ -46,7 +44,7 @@ class Server a where
     serve        :: a -> ByteString -> IO ()
 
 data Database = Database
-    { _database           :: !(TVar Value)
+    { _database           :: !(TVar JsonDB)
     , _writeNeeded        :: !(TVar Bool)
     , _serverClientCount  :: !ClientCount
     , _cache              :: !(TVar Cache)
@@ -96,14 +94,13 @@ proxyStartup options = withSocketsDo $
 
 databaseStartup :: DatabaseOptions -> IO ()
 -- ^ database server
-databaseStartup opts = do
-        db <- (getDB $ _dbPath opts) :: IO Value
-        case db of
-            Null -> die "Could not parse database on disk"
-            _    -> startup db opts
+databaseStartup opts =
+        openDB (_dbPath opts) >>= maybe
+            (die "Could not parse database on disk")
+            (startup opts)
     where
-        startup :: Value -> DatabaseOptions -> IO ()
-        startup db options = withSocketsDo $ do
+        startup :: DatabaseOptions -> JsonDB -> IO ()
+        startup options db = withSocketsDo $ do
             tcpSocket  <- listenOn $ PortNumber $ tcpPort options
             putStrLn "Server started"
 

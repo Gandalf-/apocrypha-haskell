@@ -54,7 +54,6 @@ executable apocrypha-server
   build-depends:
     base >= 4.7 && < 5,
     apocrypha,
-    aeson,
     network,
     directory,
     text,

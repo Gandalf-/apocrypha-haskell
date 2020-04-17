@@ -3,7 +3,8 @@
 module Apocrypha.Database
     ( Query
     , runAction
-    , getDB, saveDB, defaultDB
+    , openDB, getDB, saveDB, defaultDB
+    , JsonDB
     ) where
 
 import           Apocrypha.Internal.Database
@@ -16,6 +17,14 @@ import           Data.Text                   (Text)
 import qualified Data.Text                   as T
 import qualified Data.Vector                 as V
 
+type JsonDB = Value
+
+openDB :: FilePath -> IO (Maybe JsonDB)
+openDB path = do
+        db <- getDB path
+        pure $ case db of
+            Null -> Nothing
+            _    -> Just db
 
 -- | Action - core logic of the database
 -- queries traverse down levels of the database until they hit an action,
