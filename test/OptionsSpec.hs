@@ -4,7 +4,6 @@ import           Apocrypha.Internal.Options
 import           Apocrypha.Options
 
 import           Data.List                  (isSubsequenceOf)
-import           Network
 import           Test.Hspec
 
 
@@ -13,11 +12,11 @@ spec = do
         -- getOptions
         describe "get options" $
           it "invalid" $
-            getOptions path 9999 ["junk", "--headless"] `shouldBe` Nothing
+            parseOptions path 9999 ["junk", "--headless"] `shouldBe` Nothing
 
         describe "get options" $
           it "headless" $
-            getOptions path 9999 ["--headless"] `shouldBe` Just headless
+            parseOptions path 9999 ["--headless"] `shouldBe` (Just $ Left sample)
 
 
         -- parse
@@ -85,7 +84,7 @@ spec = do
 
 
     where
-        headless = Options False True True path 9999 True Nothing
+        sample = DatabaseOptions False 9999 True True True path
         options = words "headless no-cache stateless no-unix tcp-port database"
         path = "/default/db/path"
         port = 9999
