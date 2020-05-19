@@ -303,6 +303,7 @@ diskWriter (Database d w _ _ o _) = forever $ do
         when needWrite $ do
             db <- readTVarIO d
             saveDB path db
+            atomically $ writeTVar w False
     where
         path = _dbPath o :: FilePath
 
