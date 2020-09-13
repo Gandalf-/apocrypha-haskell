@@ -194,18 +194,22 @@ instance Server Proxy where
     -- proxy serve loop, send the query to the remote, read the reply, send that to the
     -- client as the response. the remote connection is locked while we're making a
     -- request, but unlocked during the reply to the client
-    serve s rawQuery = do
-            proxyRequest s (`protoSend` rawQuery)
-            proxyRequest s protoRead >>= maybe
+    serve s rawQuery =
+            lockedIO lock sendRecv >>= maybe
                 (pure ())
                 (\reply -> do
                     protoSend client reply
                     maybeLog s True True query)
         where
+            sendRecv =
+                proxyRequest s (`protoSend` rawQuery) >>
+                proxyRequest s protoRead
+
             client = clientHandle s
             query :: Query
             query = filter (not . T.null) . T.split (== '\n')
                 $ decodeUtf8 rawQuery
+            lock = _remoteLock s
 
 
 -- | Server utilities
@@ -280,7 +284,7 @@ maybeLog s hit write query =
 proxyRequest :: Proxy -> (Handle -> IO a) -> IO a
 -- ^ wrapper around durableRequest that saves all the state back into the ThreadData for
 -- the proxy. this also enforces locking around the proxy's remote handle
-proxyRequest d f = lockedIO lock $ do
+proxyRequest d f = do
         h <- readTVarIO th
         (newH, out) <- durableRequest h reconnect f
         atomically $ writeTVar th newH
@@ -288,7 +292,6 @@ proxyRequest d f = lockedIO lock $ do
     where
         th = _remoteHandle d
         reconnect = remoteConnect $ _proxyTarget $ _proxyOptions d
-        lock = _remoteLock d
 
 
 -- | Database utiltiies
