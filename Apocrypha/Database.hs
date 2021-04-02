@@ -237,7 +237,7 @@ dereference original@(Action _ _ _ top c)  (key : xs) =
 
                      -- the dereferenced value is an array, we have to
                      -- apply the remaining arguments to each member
-                     (Array a)  -> foldr (apply xs) newBase a
+                     (Array a)  -> foldr (apply xs) newBase $ V.reverse a
                      _          -> original
 
             else original
