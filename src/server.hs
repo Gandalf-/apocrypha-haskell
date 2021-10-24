@@ -22,6 +22,7 @@ import           System.Timeout              (timeout)
 import           System.Directory            (doesFileExist, removeFile)
 #endif
 
+import           Apocrypha.Server
 import           Apocrypha.Database
 import           Apocrypha.Internal.Cache    (Cache, cacheGet, cachePut,
                                               emptyCache)
@@ -160,7 +161,7 @@ instance Server Database where
             runQuery cache = atomically $ do
                 -- retrieve database, run action
                 db <- readTVar d
-                let (result, changed, newDB) = runAction db query
+                (result, changed, newDB) <- exec db query
 
                 if changed
                     -- update database, set writeNeeded, clear the cache
@@ -174,6 +175,13 @@ instance Server Database where
 
                 -- pass back result for client
                 pure result
+
+            exec :: JsonDB -> Query -> IO (Text, Bool, JsonDB)
+            exec db query = do
+                plug <- runPlugin db query
+                pure $ case plug of
+                    (Just e) -> e
+                    Nothing  -> runAction db
 
             cacheRead :: Cache -> Query -> Maybe Text
             cacheRead

@@ -192,11 +192,11 @@ action a@(Action (Object o) changed prevOutput top context) (key : xs)
 
         newBase :: Value
         newBase = Object
-                . HM.filter (not . empty)
-                . HM.insert key newValue $ o
+            . HM.filter (not . empty)
+            . HM.insert key newValue $ o
 
         nextDB :: Value
-        nextDB  = HM.lookupDefault (Object $ HM.fromList []) key o
+        nextDB = HM.lookupDefault (Object $ HM.fromList []) key o
 
         nextContext :: Context
         nextContext = Context

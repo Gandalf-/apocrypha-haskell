@@ -104,6 +104,7 @@ library
     Apocrypha.Internal.Database
     Apocrypha.Internal.Options
 
+    Apocrypha.Server
     Apocrypha.Server.Plugin
     Apocrypha.Server.Plugin.Hasher
 

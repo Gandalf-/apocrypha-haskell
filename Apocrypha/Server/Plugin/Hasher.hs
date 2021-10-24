@@ -36,10 +36,17 @@ data Hasher = Hasher
 
 instance Plugin Hasher where
     namespace _ = "hasher"
-    execute h = hasher
+    execute   _ = hasher
 
 hasher :: Value -> Query -> IO (Text, Bool, Value)
-hasher db (path:ps) = undefined
+hasher db (path:ps) = do
+        (t1, c1, newDb) <- hash db path
+        (t2, c2, outDb) <- hasher newDb ps
+        pure
+            ( T.intercalate "\n" [t1, t2]
+            , c1 || c2
+            , outDb
+            )
 hasher db [] = pure ("", False, db)
 
 -- | Business logic
@@ -143,7 +150,8 @@ epochToUtc :: Integer -> UTCTime
 epochToUtc = posixSecondsToUTCTime . fromIntegral
 
 getModTime :: Text -> IO (Maybe UTCTime)
--- has this file been modified since this time?
+-- has this file been modified since this time? have to do the same rounding
+-- that the cache does otherwise the values will never match
 getModTime tpath = handle
         (\ (_ :: IOException) -> pure Nothing) $
         Just . simplify <$> getModificationTime path
