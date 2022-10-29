@@ -17,7 +17,6 @@ import           Codec.Compression.Zlib   (compress, decompress)
 import           Control.Exception        (SomeException, evaluate, try)
 import           Data.Aeson
 import qualified Data.Aeson.Encode.Pretty as P
-import qualified Data.Aeson.Key           as K
 import qualified Data.Aeson.KeyMap        as HM
 import qualified Data.ByteString.Char8    as BS
 import qualified Data.ByteString.Lazy     as BL

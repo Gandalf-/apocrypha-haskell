@@ -25,17 +25,17 @@ import           Control.Exception           (SomeException, try)
 import           Control.Monad               (when)
 import           Control.Monad.STM           (atomically)
 import           Data.Aeson                  hiding (decode, encode)
+import qualified Data.Aeson.KeyMap           as HM
 import           Data.Binary                 (decode, encode)
 import qualified Data.ByteString.Char8       as BS
 import qualified Data.ByteString.Lazy        as BL
-import qualified Data.HashMap.Strict         as HM
 import           Data.List                   (intercalate)
 import qualified Data.Text                   as T
 import           Data.Text.Encoding          (encodeUtf8)
-import           GHC.IO.Handle.Types         (Handle)
 import           Network.Socket
 import           System.Directory            (getTemporaryDirectory)
 import           System.FilePath.Posix       ((</>))
+import           System.IO
 
 
 data Context =
@@ -176,17 +176,23 @@ getContext :: Either HostTCP HostUnix -> IO Context
 getContext (Right _) = do
         pure NoConnection
 #else
-getContext (Right (host, path)) = do
-        result <- try (connectTo host $ UnixSocket path
-                      ) :: HandleOrException
+getContext (Right (_, path)) = do
+        result <- try (do
+                sock <- socket AF_UNIX Stream defaultProtocol
+                connect sock $ SockAddrUnix path
+                socketToHandle sock ReadWriteMode
+            ) :: HandleOrException
         pure $ eitherToNetCon result
 #endif
 
 getContext (Left (host, port)) = do
-        result <- try (connectTo host $ PortNumber port
-                      ) :: HandleOrException
+        result <- try (do
+                sock <- socket AF_INET Stream defaultProtocol
+                addr:_ <- getAddrInfo Nothing (Just host) (Just $ show port)
+                connect sock $ addrAddress addr
+                socketToHandle sock ReadWriteMode
+            ) :: HandleOrException
         pure $ eitherToNetCon result
-
 
 eitherToNetCon :: Either a Handle -> Context
 eitherToNetCon (Left _)  = NoConnection

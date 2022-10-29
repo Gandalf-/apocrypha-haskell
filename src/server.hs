@@ -13,7 +13,7 @@ import           Data.Maybe                  (fromMaybe)
 import           Data.Text                   (Text)
 import qualified Data.Text                   as T
 import           Data.Text.Encoding          (decodeUtf8, encodeUtf8)
-import           Network
+import           Network.Socket
 import           System.Environment          (getArgs)
 import           System.Exit                 (die)
 import           System.IO
@@ -65,12 +65,10 @@ main :: IO ()
 -- ^ set up the listening socket, read the database from disk and start
 -- initial worker threads
 main = do
-        defaultPath <- defaultDB
-
-        parseOptions defaultPath defaultTCPPort <$> getArgs >>=
-            maybe
-                (die usage)
-                (either databaseStartup proxyStartup)
+    defaultPath <- defaultDB
+    getArgs >>= maybe
+        (die usage)
+        (either databaseStartup proxyStartup) . parseOptions defaultPath defaultTCPPort
 
 proxyStartup :: ProxyOptions -> IO ()
 -- ^ proxy server
@@ -82,7 +80,7 @@ proxyStartup options = withSocketsDo $
         target = _proxyTarget options
 
         startup remote = do
-            local <- listenOn $ PortNumber $ tcpPort options
+            local <- getTcpSocket $ tcpPort options
             putStrLn "Proxy Server started"
 
             ccMV <- newTVarIO 0           -- running client total
@@ -101,7 +99,7 @@ databaseStartup opts =
     where
         startup :: DatabaseOptions -> JsonDB -> IO ()
         startup options db = withSocketsDo $ do
-            tcpSocket  <- listenOn $ PortNumber $ tcpPort options
+            tcpSocket  <- getTcpSocket $ tcpPort options
             putStrLn "Server started"
 
             dbMV <- newTVarIO db          -- in memory database
@@ -114,13 +112,10 @@ databaseStartup opts =
                 persistThread $ env stdout
 
 #ifndef mingw32_HOST_OS
-            unixSocket <- getUnixSocket
-            -- listen on both sockets
-            when (_dbEnableUnix options) $
-                void . async $
-                    clientForker unixSocket env
+            when (_dbEnableUnix options) $ do
+                unixSocket <- getUnixSocket
+                void . async $ clientForker unixSocket env
 #endif
-
             clientForker tcpSocket env
 
         persistThread :: Database -> IO ()
@@ -131,10 +126,20 @@ databaseStartup opts =
         getUnixSocket = do
             unixPath <- unixSocketPath
             exists <- doesFileExist unixPath
-            when exists $
-                removeFile unixPath
-            listenOn $ UnixSocket unixPath
+            when exists $ removeFile unixPath
+            sock <- socket AF_UNIX Stream defaultProtocol
+            bind sock $ SockAddrUnix unixPath
+            listen sock 5
+            pure sock
 #endif
+
+getTcpSocket :: PortNumber -> IO Socket
+getTcpSocket port = do
+        sock <- socket AF_INET Stream defaultProtocol
+        addr:_ <- getAddrInfo Nothing (Just "0.0.0.0") (Just $ show port)
+        bind sock (addrAddress addr)
+        listen sock 5
+        pure sock
 
 instance Server Database where
     logEnabled   = headless . _serverOptions
@@ -223,7 +228,8 @@ clientForker socket env = forever $ do
             when (count >= maxClients) retry
 
         -- accept a new client connection, set buffering, increment client total
-        (client, _, _) <- accept socket
+        (sock, _) <- accept socket
+        client <- socketToHandle sock ReadWriteMode
         hSetBuffering client NoBuffering
         atomically $ modifyTVar n (+ 1)
 
