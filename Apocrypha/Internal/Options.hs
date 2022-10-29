@@ -1,7 +1,7 @@
 module Apocrypha.Internal.Options where
 
 import           Data.List.Split (splitOn)
-import           Network
+import           Network.Socket
 
 {-|
     Module      : Apocrypha.Internal.Options

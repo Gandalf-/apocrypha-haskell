@@ -1,7 +1,7 @@
 module Apocrypha.Options where
 
 import           Apocrypha.Internal.Options
-import           Network                    (PortNumber)
+import           Network.Socket             (PortNumber)
 
 {-|
     Module      : Apocrypha.Options

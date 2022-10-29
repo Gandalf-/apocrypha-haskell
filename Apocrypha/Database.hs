@@ -10,9 +10,11 @@ module Apocrypha.Database
 import           Apocrypha.Internal.Database
 
 import           Data.Aeson
+import qualified Data.Aeson.Key              as K
+import qualified Data.Aeson.KeyMap           as HM
 import qualified Data.ByteString.Char8       as BS
-import qualified Data.HashMap.Strict         as HM
 import           Data.List                   (sort)
+import           Data.Maybe                  (fromMaybe)
 import           Data.Text                   (Text)
 import qualified Data.Text                   as T
 import qualified Data.Vector                 as V
@@ -57,7 +59,7 @@ action (Action value _ _ t context) [] =
 action (Action db@(Object o) _ _ t c) ("--keys" : _) =
         Action db False keys t c
     where
-        keys = sort $ HM.keys o
+        keys = sort $ map K.toText $ HM.keys o
 
 -- keys - bottom
 action (Action a _ _ _ _) ("--keys" : _) =
@@ -193,10 +195,11 @@ action a@(Action (Object o) changed prevOutput top context) (key : xs)
         newBase :: Value
         newBase = Object
                 . HM.filter (not . empty)
-                . HM.insert key newValue $ o
+                . HM.insert (K.fromText key) newValue $ o
 
         nextDB :: Value
-        nextDB  = HM.lookupDefault (Object $ HM.fromList []) key o
+        nextDB  = fromMaybe (Object $ HM.fromList [])
+                $ HM.lookup (K.fromText key) o
 
         nextContext :: Context
         nextContext = Context
@@ -230,7 +233,7 @@ runAction db query =
 
 dereference :: Action -> Query -> Action
 dereference original@(Action _ _ _ top c)  (key : xs) =
-        if key `elem` HM.keys top
+        if key `elem` map K.toText (HM.keys top)
             then case value of
                      -- the dereferenced value is just a string
                      (String s) -> action newBase (s : xs)
@@ -245,7 +248,7 @@ dereference original@(Action _ _ _ top c)  (key : xs) =
         newBase :: Action
         newBase = Action (Object top) False [] top c
 
-        value = HM.lookupDefault Null key top
+        value = fromMaybe Null $ HM.lookup (K.fromText key) top
 
         apply :: Query -> Value -> Action -> Action
         apply qs (String s) a = action a (s : qs)

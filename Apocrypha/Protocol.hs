@@ -33,7 +33,7 @@ import           Data.List                   (intercalate)
 import qualified Data.Text                   as T
 import           Data.Text.Encoding          (encodeUtf8)
 import           GHC.IO.Handle.Types         (Handle)
-import           Network
+import           Network.Socket
 import           System.Directory            (getTemporaryDirectory)
 import           System.FilePath.Posix       ((</>))
 
