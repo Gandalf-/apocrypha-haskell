@@ -1,5 +1,5 @@
 name:                apocrypha
-version:             0.1.1.0
+version:             0.2.1.0
 synopsis:            A lightweight, flexible JSON server and client
 description:         Please see README.md
 homepage:            https://www.anardil.net
@@ -54,7 +54,7 @@ executable apocrypha-server
   build-depends:
     base >= 4.7 && < 5,
     apocrypha,
-    network < 2.6.3.1,
+    network,
     directory,
     text,
     unordered-containers,

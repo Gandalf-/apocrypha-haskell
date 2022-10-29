@@ -7,7 +7,7 @@ import           Apocrypha.Database
 import           Apocrypha.Internal.Database
 
 import           Data.Aeson
-import qualified Data.HashMap.Strict         as HM
+import qualified Data.Aeson.KeyMap           as HM
 import           Data.Text                   (Text)
 import qualified Data.Text                   as T
 import qualified Data.Vector                 as V
@@ -118,7 +118,7 @@ dereferenceSpec :: Spec
 dereferenceSpec =
     describe "dereference" $ do
         it "nothing" $ do
-            cx <- getMemoryContext
+            cx <- getContext ServerMemory
             get cx ["apple"] `shouldReturn` (Nothing :: Maybe String)
 
         it "basic" $

@@ -5,7 +5,6 @@ import           Control.Concurrent
 import           Control.Concurrent.Async    (async)
 import           Control.Concurrent.STM.TVar
 import           Control.Exception           (finally)
-import           Control.Monad               (join)
 import           Control.Monad.Except
 import           Control.Monad.STM
 import           Data.ByteString.Char8       (ByteString)
@@ -26,14 +25,10 @@ import           Apocrypha.Database
 import           Apocrypha.Internal.Cache    (Cache, cacheGet, cachePut,
                                               emptyCache)
 import           Apocrypha.Options
-#ifndef mingw32_HOST_OS
-import           Apocrypha.Protocol          (Context (..), defaultTCPPort,
-                                              getContext, protoRead, protoSend,
+import           Apocrypha.Protocol          (ServerType (..), contextToHandle,
+                                              defaultTCPPort, getContext,
+                                              protoRead, protoSend,
                                               unixSocketPath)
-#else
-import           Apocrypha.Protocol          (Context (..), defaultTCPPort,
-                                              getContext, protoRead, protoSend)
-#endif
 
 type ClientCount = TVar Integer
 
@@ -221,14 +216,14 @@ instance Server Proxy where
 
 clientForker :: Server a => Socket -> (Handle -> a) -> IO b
 -- ^ listen for clients, fork off workers
-clientForker socket env = forever $ do
+clientForker listener env = forever $ do
         -- do not accept any more clients if we're over our connection limit
         atomically $ do
             count <- readTVar n
             when (count >= maxClients) retry
 
         -- accept a new client connection, set buffering, increment client total
-        (sock, _) <- accept socket
+        (sock, _) <- accept listener
         client <- socketToHandle sock ReadWriteMode
         hSetBuffering client NoBuffering
         atomically $ modifyTVar n (+ 1)
@@ -369,8 +364,4 @@ sendReply h value = protoSend h $ encodeUtf8 value
 
 remoteConnect :: (String, PortNumber) -> IO (Maybe Handle)
 -- ^ attempt to connect to the target in the options, producing a raw handle
-remoteConnect target = do
-        serverContext <- getContext $ Left target
-        pure $ case serverContext of
-            (NetworkConnection h) -> Just h
-            _                     -> Nothing
+remoteConnect address = contextToHandle <$> getContext (ServerTcp address)

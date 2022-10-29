@@ -57,12 +57,12 @@ spec = do
 
         describe "memoryDB" $
           it "can make queries" $ do
-            cx <- getMemoryContext
+            cx <- getContext ServerMemory
             clientTest cx
 
         describe "serverless" $
           it "can make queries" $ do
-            cx <- getServerlessContext "test/test.db"
+            cx <- getContext (Serverless "test/test.db")
             clientTest cx
             removeFile "test/test.db"
 
