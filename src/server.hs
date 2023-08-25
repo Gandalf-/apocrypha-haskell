@@ -130,8 +130,9 @@ databaseStartup opts =
 
 getTcpSocket :: PortNumber -> IO Socket
 getTcpSocket port = do
-        sock <- socket AF_INET Stream defaultProtocol
-        addr:_ <- getAddrInfo Nothing (Just "0.0.0.0") (Just $ show port)
+        sock <- socket AF_INET6 Stream defaultProtocol
+        setSocketOption sock IPv6Only 0
+        addr:_ <- getAddrInfo Nothing (Just "::") (Just $ show port)
         bind sock (addrAddress addr)
         listen sock 5
         pure sock
