@@ -103,8 +103,7 @@ databaseStartup opts =
             ccMV <- newTVarIO 0           -- running client total
 
             let env = Database dbMV wrMV ccMV chMV options
-            when (_dbEnablePersist options) $
-                persistThread $ env stdout
+            void . async . diskWriter $ env stdout
 
 #ifndef mingw32_HOST_OS
             when (_dbEnableUnix options) $ do
@@ -112,9 +111,6 @@ databaseStartup opts =
                 void . async $ clientForker unixSocket env
 #endif
             clientForker tcpSocket env
-
-        persistThread :: Database -> IO ()
-        persistThread = void . async . diskWriter
 
 #ifndef mingw32_HOST_OS
         getUnixSocket :: IO Socket
@@ -145,18 +141,24 @@ instance Server Database where
     -- Run a user query through the database, and send them the result.
     -- If the database reports that it changed, we set writeNeeded.
     serve s@(Database d w _ c o client) rawQuery = do
-            cache <- readTVarIO c
-            case cacheRead cache query of
-                -- cache hit
-                Just value -> do
-                    sendReply client value
-                    maybeLog s cacheHit noChange query
-
-                -- cache miss, or disabled
-                Nothing -> do
-                    runQuery cache >>= sendReply client
-                    maybeLog s cacheMiss noChange query
+            case query of
+                ["--flush"] -> flush >> sendReply client T.empty
+                _           -> processQuery
         where
+            processQuery :: IO ()
+            processQuery = do
+                cache <- readTVarIO c
+                case cacheRead cache query of
+                    -- cache hit
+                    Just value -> do
+                        sendReply client value
+                        maybeLog s cacheHit noChange query
+
+                    -- cache miss, or disabled
+                    Nothing -> do
+                        runQuery cache >>= sendReply client
+                        maybeLog s cacheMiss noChange query
+
             runQuery :: Cache -> IO Text
             runQuery cache = atomically $ do
                 -- retrieve database, run action
@@ -167,7 +169,7 @@ instance Server Database where
                     -- update database, set writeNeeded, clear the cache
                     then do
                         writeTVar d newDB
-                        writeTVar w True
+                        when (_dbEnablePersist o) $ writeTVar w True
                         writeTVar c emptyCache
 
                     -- no change, just update the cache
@@ -175,6 +177,10 @@ instance Server Database where
 
                 -- pass back result for client
                 pure result
+
+            flush = do
+                needWrite <- readTVarIO w
+                when needWrite $ threadDelay 50000 >> flush
 
             cacheRead :: Cache -> Query -> Maybe Text
             cacheRead
